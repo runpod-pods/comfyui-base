@@ -69,17 +69,14 @@ jobs:
 
       - name: Build and push the images to Docker Hub
         uses: docker/bake-action@v5
+        env:
+          TAG: ${{ env.RELEASE_VERSION }}
         with:
           push: true
           files: ./docker-bake.hcl
           targets: |
             regular
             rtx5090
-          set: |
-            regular.tags[0]="${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}"
-            regular.tags[1]="${{ env.IMAGE_REF }}:latest"
-            rtx5090.tags[0]="${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}-5090"
-            rtx5090.tags[1]="${{ env.IMAGE_REF }}:latest-5090"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
