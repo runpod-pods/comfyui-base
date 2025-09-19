@@ -52,12 +52,20 @@ jobs:
             VERSION="${{ github.event.inputs.version }}"
             echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
             echo "IS_MANUAL_RELEASE=true" >> $GITHUB_ENV
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            # GitHub Release published event
+            VERSION="${{ github.event.release.tag_name }}"
+            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
+            echo "IS_MANUAL_RELEASE=false" >> $GITHUB_ENV
           else
             # Tag trigger: use tag name (remove refs/tags/ prefix)
             VERSION=${GITHUB_REF#refs/tags/}
             echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
             echo "IS_MANUAL_RELEASE=false" >> $GITHUB_ENV
           fi
+
+          # Export TAG for docker-bake.hcl variable override
+          echo "TAG=${RELEASE_VERSION}" >> $GITHUB_ENV
 
       - name: Build and push the images to Docker Hub
         uses: docker/bake-action@v5
@@ -68,7 +76,10 @@ jobs:
             regular
             rtx5090
           set: |
-            TAG=${{ env.RELEASE_VERSION }}
+            regular.tags[0]="${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}"
+            regular.tags[1]="${{ env.IMAGE_REF }}:latest"
+            rtx5090.tags[0]="${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}-5090"
+            rtx5090.tags[1]="${{ env.IMAGE_REF }}:latest-5090"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
