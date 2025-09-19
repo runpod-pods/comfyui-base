@@ -14,16 +14,24 @@ target "common" {
 # Regular ComfyUI image (CUDA 12.4)
 target "regular" {
   inherits = ["common"]
-  dockerfile = "docker/Dockerfile"
+  dockerfile = "Dockerfile"
   tags = ["runpod/comfyui-slim:${TAG}"]
 }
 
-# RTX 5090 optimized image (CUDA 12.8)
+# Dev image for local testing
+target "dev" {
+  inherits = ["common"]
+  dockerfile = "Dockerfile"
+  tags = ["runpod/comfyui-slim:dev"]
+  output = ["type=docker"]
+}
+
+# RTX 5090 optimized image (CUDA 12.8 + latest PyTorch build)
 target "rtx5090" {
   inherits = ["common"]
-  dockerfile = "docker/Dockerfile.5090"
+  dockerfile = "Dockerfile.5090"
   args = {
-    START_SCRIPT = "scripts/start.5090.sh"
+    START_SCRIPT = "start.5090.sh"
   }
   tags = ["runpod/comfyui-slim:${TAG}-5090"]
 }
