@@ -68,8 +68,7 @@ jobs:
             regular
             rtx5090
           set: |
-            regular.tags=["${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}","${{ env.IMAGE_REF }}:latest"]
-            rtx5090.tags=["${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}-5090","${{ env.IMAGE_REF }}:latest-5090"]
+            TAG=${{ env.RELEASE_VERSION }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1

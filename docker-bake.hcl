@@ -15,7 +15,10 @@ target "common" {
 target "regular" {
   inherits = ["common"]
   dockerfile = "Dockerfile"
-  tags = ["runpod/comfyui:${TAG}"]
+  tags = [
+    "runpod/comfyui:${TAG}",
+    "runpod/comfyui:latest",
+  ]
 }
 
 # Dev image for local testing
@@ -26,6 +29,19 @@ target "dev" {
   output = ["type=docker"]
 }
 
+# Dev push targets (for CI pushing dev tags, without overriding latest)
+target "devpush" {
+  inherits = ["common"]
+  dockerfile = "Dockerfile"
+  tags = ["runpod/comfyui:dev"]
+}
+
+target "devpush5090" {
+  inherits = ["common"]
+  dockerfile = "Dockerfile.5090"
+  tags = ["runpod/comfyui:dev-5090"]
+}
+
 # RTX 5090 optimized image (CUDA 12.8 + latest PyTorch build)
 target "rtx5090" {
   inherits = ["common"]
@@ -33,5 +49,8 @@ target "rtx5090" {
   args = {
     START_SCRIPT = "start.5090.sh"
   }
-  tags = ["runpod/comfyui:${TAG}-5090"]
+  tags = [
+    "runpod/comfyui:${TAG}-5090",
+    "runpod/comfyui:latest-5090",
+  ]
 }
