@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*" # Trigger on version tags like v1.0.0, v2.1.0, etc.
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., v2.8.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write # Required for creating GitHub releases
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Clear space to remove unused folders
+        run: |
+          rm -rf /usr/share/dotnet
+          rm -rf /opt/ghc
+          rm -rf "/usr/local/share/boost"
+          rm -rf "$AGENT_TOOLSDIRECTORY"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set environment variables
+        run: |
+          echo "IMAGE_REF=runpod/comfyui" >> $GITHUB_ENV
+
+          # Determine version based on trigger type
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Manual trigger: use input version
+            VERSION="${{ github.event.inputs.version }}"
+            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
+            echo "IS_MANUAL_RELEASE=true" >> $GITHUB_ENV
+          else
+            # Tag trigger: use tag name (remove refs/tags/ prefix)
+            VERSION=${GITHUB_REF#refs/tags/}
+            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
+            echo "IS_MANUAL_RELEASE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Build and push the images to Docker Hub
+        uses: docker/bake-action@v5
+        with:
+          push: true
+          files: ./docker-bake.hcl
+          targets: |
+            regular
+            rtx5090
+          set: |
+            regular.tags=${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }},${{ env.IMAGE_REF }}:latest
+            rtx5090.tags=${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}-5090,${{ env.IMAGE_REF }}:latest-5090
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: github.event_name != 'release'
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          name: ${{ env.RELEASE_VERSION }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release Summary
+        run: |
+          echo "🚀 Release completed!"
+          echo "Version: ${{ env.RELEASE_VERSION }}"
+          echo "Docker Images:"
+          echo " - ${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }} (regular)"
+          echo " - ${{ env.IMAGE_REF }}:latest (regular)"
+          echo " - ${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}-5090 (RTX 5090)"
+          echo " - ${{ env.IMAGE_REF }}:latest-5090 (RTX 5090)"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Trigger: Manual workflow dispatch"
+          else
+            echo "Trigger: GitHub release (tag: ${{ github.ref_name }})"
+          fi

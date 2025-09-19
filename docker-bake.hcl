@@ -15,14 +15,14 @@ target "common" {
 target "regular" {
   inherits = ["common"]
   dockerfile = "Dockerfile"
-  tags = ["runpod/comfyui-slim:${TAG}"]
+  tags = ["runpod/comfyui:${TAG}"]
 }
 
 # Dev image for local testing
 target "dev" {
   inherits = ["common"]
   dockerfile = "Dockerfile"
-  tags = ["runpod/comfyui-slim:dev"]
+  tags = ["runpod/comfyui:dev"]
   output = ["type=docker"]
 }
 
@@ -33,5 +33,5 @@ target "rtx5090" {
   args = {
     START_SCRIPT = "start.5090.sh"
   }
-  tags = ["runpod/comfyui-slim:${TAG}-5090"]
+  tags = ["runpod/comfyui:${TAG}-5090"]
 }
