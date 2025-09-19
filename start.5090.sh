@@ -2,7 +2,7 @@
 set -e  # Exit the script if any statement returns a non-true return value
 
 COMFYUI_DIR="/workspace/runpod-slim/ComfyUI"
-VENV_DIR="$COMFYUI_DIR/.venv"
+VENV_DIR="$COMFYUI_DIR/.venv-cu128"
 FILEBROWSER_CONFIG="/root/.config/filebrowser/config.json"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 
