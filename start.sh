@@ -160,7 +160,6 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
 
     # Install additional custom nodes
     CUSTOM_NODES=(
-        "https://github.com/crystian/ComfyUI-Crystools"
         "https://github.com/kijai/ComfyUI-KJNodes"
         "https://github.com/MoonGoblinDev/Civicomfy"
     )
