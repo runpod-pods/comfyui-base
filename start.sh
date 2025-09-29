@@ -187,7 +187,7 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
         export UV_LINK_MODE=copy
         
         # Install the requirements and PyTorch
-        uv pip install --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
         uv pip install --no-cache -r requirements.txt
         
         # Install dependencies for custom nodes
