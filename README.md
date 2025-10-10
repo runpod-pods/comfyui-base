@@ -1,8 +1,8 @@
-# ComfyUI Slim
+# ComfyUI
 
 A compact and optimized Docker container designed as an easy-to-use RunPod template for ComfyUI. Images are highly optimized for size, only ~650MB while including all features!
 
-## Why ComfyUI Slim?
+## Why ComfyUI?
 
 - Purpose-built for RunPod deployments
 - Ultra-compact: Only ~650MB image size (compared to multi-GB alternatives)
@@ -31,12 +31,13 @@ A compact and optimized Docker container designed as an easy-to-use RunPod templ
 
 - `8188`: ComfyUI web interface
 - `8080`: FileBrowser interface
-- `8048`: JupyterLab interface
+- `8888`: JupyterLab interface
 - `22`: SSH access
 
 ## Custom Arguments
 
 You can customize ComfyUI startup arguments by editing `/workspace/runpod-slim/comfyui_args.txt`. Add one argument per line:
+
 ```
 --max-batch-size 8
 --preview-method auto
@@ -51,4 +52,3 @@ You can customize ComfyUI startup arguments by editing `/workspace/runpod-slim/c
 ## License
 
 This project is licensed under the GPLv3 License.
-
