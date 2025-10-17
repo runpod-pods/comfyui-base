@@ -1,42 +1,23 @@
-# ComfyUI
+[![Watch the video](https://i3.ytimg.com/vi/JovhfHhxqdM/hqdefault.jpg)](https://www.youtube.com/watch?v=JovhfHhxqdM)
 
-A compact and optimized Docker container designed as an easy-to-use RunPod template for ComfyUI. Images are highly optimized for size, only ~650MB while including all features!
+Run the latest ComfyUI. First start installs dependencies (takes a few minutes), then when you see this in the logs, ComfyUI is ready to be used: `[ComfyUI-Manager] All startup tasks have been completed.`
 
-## Why ComfyUI?
+## Access
 
-- Purpose-built for RunPod deployments
-- Ultra-compact: Only ~650MB image size (compared to multi-GB alternatives)
-- Zero configuration needed: Works out of the box
-- Includes all essential tools for remote work
+- `8188`: ComfyUI web UI
+- `8080`: FileBrowser (admin / adminadmin12)
+- `8888`: JupyterLab (token via `JUPYTER_PASSWORD`, root at `/workspace`)
+- `22`: SSH (set `PUBLIC_KEY` or check logs for generated root password)
 
-## Features
+## Pre-installed custom nodes
 
-- Two optimized variants:
-  - Regular: CUDA 12.4 with stable PyTorch
-  - RTX 5090: CUDA 12.8 with PyTorch Nightly (optimized for latest NVIDIA GPUs)
-- Built-in tools:
-  - FileBrowser for easy file management (port 8080)
-  - JupyterLab workspace (port 8048)
-  - SSH access
-- Pre-installed custom nodes:
-  - ComfyUI-Manager
-  - ComfyUI-Crystools
-  - ComfyUI-KJNodes
-- Performance optimizations:
-  - UV package installer for faster dependency installation
-  - NVENC support in FFmpeg
-  - Optimized CUDA configurations
-
-## Ports
-
-- `8188`: ComfyUI web interface
-- `8080`: FileBrowser interface
-- `8888`: JupyterLab interface
-- `22`: SSH access
+- ComfyUI-Manager
+- ComfyUI-KJNodes
+- Civicomfy
 
 ## Custom Arguments
 
-You can customize ComfyUI startup arguments by editing `/workspace/runpod-slim/comfyui_args.txt`. Add one argument per line:
+Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
 
 ```
 --max-batch-size 8
@@ -45,10 +26,6 @@ You can customize ComfyUI startup arguments by editing `/workspace/runpod-slim/c
 
 ## Directory Structure
 
-- `/workspace/runpod-slim/ComfyUI`: Main ComfyUI installation
-- `/workspace/runpod-slim/comfyui_args.txt`: Custom arguments file
-- `/workspace/runpod-slim/filebrowser.db`: FileBrowser database
-
-## License
-
-This project is licensed under the GPLv3 License.
+- `/workspace/runpod-slim/ComfyUI`: ComfyUI install
+- `/workspace/runpod-slim/comfyui_args.txt`: ComfyUI args
+- `/workspace/runpod-slim/filebrowser.db`: FileBrowser DB
