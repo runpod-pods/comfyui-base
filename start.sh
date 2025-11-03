@@ -176,24 +176,17 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
     # Create and setup virtual environment if not present
     if [ ! -d "$VENV_DIR" ]; then
         cd $COMFYUI_DIR
-        python3.12 -m venv $VENV_DIR
+        # Create venv with access to system packages (torch, numpy, etc. pre-installed in image)
+        python3.12 -m venv --system-site-packages $VENV_DIR
         source $VENV_DIR/bin/activate
-        
-        # Use pip first to install uv
-        pip install -U pip
-        pip install uv
-        
-        # Configure uv to use copy instead of hardlinks
-        export UV_LINK_MODE=copy
-        
-        # Install the requirements and PyTorch
-        uv pip install --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-        uv pip install --no-cache -r requirements.txt
-        
-        # Install dependencies for custom nodes
-        echo "Installing/updating dependencies for custom nodes..."
-        uv pip install --no-cache GitPython numpy pillow opencv-python  # Common dependencies
-        
+
+        # Ensure pip is available in the venv (needed for ComfyUI-Manager)
+        python -m ensurepip --upgrade
+        python -m pip install --upgrade pip
+
+        echo "Base packages (torch, numpy, etc.) available from system site-packages"
+        echo "Installing custom node dependencies..."
+
         # Install dependencies for all custom nodes
         cd "$COMFYUI_DIR/custom_nodes"
         for node_dir in */; do
@@ -204,19 +197,19 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
                 # Check for requirements.txt
                 if [ -f "requirements.txt" ]; then
                     echo "Installing requirements.txt for $node_dir"
-                    uv pip install --no-cache -r requirements.txt
+                    pip install --no-cache-dir -r requirements.txt
                 fi
-                
+
                 # Check for install.py
                 if [ -f "install.py" ]; then
                     echo "Running install.py for $node_dir"
                     python install.py
                 fi
-                
+
                 # Check for setup.py
                 if [ -f "setup.py" ]; then
                     echo "Running setup.py for $node_dir"
-                    uv pip install --no-cache -e .
+                    pip install --no-cache-dir -e .
                 fi
             fi
         done
@@ -224,11 +217,9 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
 else
     # Just activate the existing venv
     source $VENV_DIR/bin/activate
-    
-    # Always install/update dependencies for custom nodes
-    echo "Installing/updating dependencies for custom nodes..."
-    uv pip install --no-cache GitPython numpy pillow  # Common dependencies
-    
+
+    echo "Checking for custom node dependencies..."
+
     # Install dependencies for all custom nodes
     cd "$COMFYUI_DIR/custom_nodes"
     for node_dir in */; do
