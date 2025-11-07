@@ -67,7 +67,7 @@ jobs:
           # Export TAG for docker-bake.hcl variable override
           echo "TAG=${RELEASE_VERSION}" >> $GITHUB_ENV
 
-      - name: Build and push the images to Docker Hub
+      - name: Build and push regular image
         uses: docker/bake-action@v5
         env:
           TAG: ${{ env.RELEASE_VERSION }}
@@ -76,6 +76,20 @@ jobs:
           files: ./docker-bake.hcl
           targets: |
             regular
+
+      - name: Clean up Docker build cache
+        run: |
+          docker builder prune -af --filter "until=1h"
+          docker system prune -af --volumes
+
+      - name: Build and push 5090 image
+        uses: docker/bake-action@v5
+        env:
+          TAG: ${{ env.RELEASE_VERSION }}
+        with:
+          push: true
+          files: ./docker-bake.hcl
+          targets: |
             rtx5090
 
       - name: Create GitHub Release
