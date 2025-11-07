@@ -11,7 +11,7 @@ on:
 
 jobs:
   dev:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2204
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -36,19 +36,6 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push regular dev image
-        uses: docker/bake-action@v5
-        with:
-          push: ${{ inputs.push }}
-          files: ./docker-bake.hcl
-          targets: |
-            devpush
-
-      - name: Clean up Docker build cache
-        run: |
-          docker builder prune -af --filter "until=1h"
-          docker system prune -af --volumes
-
       - name: Build and push 5090 dev image
         uses: docker/bake-action@v5
         with:
@@ -56,3 +43,16 @@ jobs:
           files: ./docker-bake.hcl
           targets: |
             devpush5090
+
+      - name: Clean up Docker build cache
+        run: |
+          docker builder prune -af --filter "until=1h"
+          docker system prune -af --volumes
+
+      - name: Build and push regular dev image
+        uses: docker/bake-action@v5
+        with:
+          push: ${{ inputs.push }}
+          files: ./docker-bake.hcl
+          targets: |
+            devpush
