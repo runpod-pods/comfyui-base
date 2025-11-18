@@ -162,6 +162,7 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
     CUSTOM_NODES=(
         "https://github.com/kijai/ComfyUI-KJNodes"
         "https://github.com/MoonGoblinDev/Civicomfy"
+        "https://github.com/MadiatorLabs/ComfyUI-RunpodDirect"
     )
 
     for repo in "${CUSTOM_NODES[@]}"; do
