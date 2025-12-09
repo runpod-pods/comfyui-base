@@ -14,20 +14,24 @@ RUN apt-get update && \
     wget \
     curl \
     ca-certificates \
-    && add-apt-repository ppa:deadsnakes/ppa && \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-venv \
     python3.12-dev \
     build-essential \
-    && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
+    && rm cuda-keyring_1.1-1_all.deb \
     && apt-get update \
     && apt-get install -y --no-install-recommends cuda-minimal-build-12-4 \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
-    && rm cuda-keyring_1.1-1_all.deb
+    && rm -rf /var/lib/apt/lists/*
 
 # Install pip for Python 3.12 and upgrade it
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
