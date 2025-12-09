@@ -22,6 +22,8 @@ jobs:
         remove-haskell: 'true'
         remove-codeql: 'true'
         remove-docker-images: 'true'
+        build-mount-path: '/var/lib/docker'
+        build-mount-path-ownership: 'root:root'
     - uses: actions/checkout@v4
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
