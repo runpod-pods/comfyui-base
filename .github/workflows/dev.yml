@@ -36,7 +36,7 @@ jobs:
         uses: docker/bake-action@v5
         with:
           push: ${{ inputs.push }}
-          files: ./docker-bake.hcl
+          files: docker-bake.hcl
           targets: |
             devpush5090
 
@@ -49,6 +49,6 @@ jobs:
         uses: docker/bake-action@v5
         with:
           push: ${{ inputs.push }}
-          files: ./docker-bake.hcl
+          files: docker-bake.hcl
           targets: |
             devpush
