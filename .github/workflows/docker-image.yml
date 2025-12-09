@@ -30,7 +30,7 @@ jobs:
       uses: docker/bake-action@v5
       with:
         push: ${{ github.event_name == 'push' }}
-        files: ./docker-bake.hcl
+        files: docker-bake.hcl
         targets: |
           devpush
           devpush5090
