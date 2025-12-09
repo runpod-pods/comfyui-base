@@ -1,0 +1,367 @@
+{
+    "z_image": {
+        "description": "Z-Image model files for ComfyUI",
+        "models": [
+            {
+                "name": "Z-Image-Turbo",
+                "type": "checkpoint",
+                "description": "Main Z-Image-Turbo model (6B parameters, 8-step generation)",
+                "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo",
+                "files": [
+                    {
+                        "filename": "diffusion_pytorch_model.safetensors",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/diffusion_pytorch_model.safetensors",
+                        "destination": "models/diffusion_models/"
+                    },
+                    {
+                        "filename": "model_index.json",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/model_index.json",
+                        "destination": "models/diffusion_models/"
+                    }
+                ]
+            }
+        ],
+        "controlnets": [
+            {
+                "name": "Z-Image-Turbo-Fun-Controlnet-Union",
+                "type": "controlnet",
+                "description": "ControlNet Union supporting Canny, HED, Depth, Pose, and MLSD",
+                "url": "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union",
+                "files": [
+                    {
+                        "filename": "Z-Image-Turbo-Fun-Controlnet-Union.safetensors",
+                        "url": "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union/resolve/main/Z-Image-Turbo-Fun-Controlnet-Union.safetensors",
+                        "destination": "models/controlnet/"
+                    }
+                ]
+            }
+        ],
+        "loras": [
+            {
+                "name": "Z-Image-De-Turbo",
+                "type": "lora",
+                "description": "De-distillation LoRA for more detailed generation",
+                "url": "https://huggingface.co/ostris/Z-Image-De-Turbo",
+                "files": [
+                    {
+                        "filename": "z_image_de_turbo.safetensors",
+                        "url": "https://huggingface.co/ostris/Z-Image-De-Turbo/resolve/main/z_image_de_turbo.safetensors",
+                        "destination": "models/loras/"
+                    }
+                ]
+            },
+            {
+                "name": "Z-Image-Turbo-AIO",
+                "type": "lora",
+                "description": "All-in-One LoRA for Z-Image-Turbo with multiple styles",
+                "url": "https://huggingface.co/SeeSee21/Z-Image-Turbo-AIO",
+                "files": [
+                    {
+                        "filename": "z_image_turbo_aio.safetensors",
+                        "url": "https://huggingface.co/SeeSee21/Z-Image-Turbo-AIO/resolve/main/z_image_turbo_aio.safetensors",
+                        "destination": "models/loras/"
+                    }
+                ]
+            }
+        ],
+        "vaes": [
+            {
+                "name": "Z-Image VAE",
+                "type": "vae",
+                "description": "VAE for Z-Image models",
+                "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo",
+                "files": [
+                    {
+                        "filename": "diffusion_pytorch_model.safetensors",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/vae/diffusion_pytorch_model.safetensors",
+                        "destination": "models/vae/"
+                    }
+                ]
+            }
+        ],
+        "text_encoders": [
+            {
+                "name": "Z-Image Text Encoder",
+                "type": "text_encoder",
+                "description": "Text encoder for Z-Image (supports Chinese and English)",
+                "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo",
+                "files": [
+                    {
+                        "filename": "model.safetensors",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/text_encoder/model.safetensors",
+                        "destination": "models/text_encoders/"
+                    }
+                ]
+            }
+        ]
+    },
+    "qwen_image_edit": {
+        "description": "Qwen-Image-Edit model files for ComfyUI (image editing and manipulation)",
+        "models": [
+            {
+                "name": "Qwen-Image-Edit-2509",
+                "type": "checkpoint",
+                "description": "Main Qwen-Image-Edit model for multi-image editing and consistency",
+                "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2509",
+                "size": "57.7 GB",
+                "files": [
+                    {
+                        "filename": "Full model (all components)",
+                        "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2509",
+                        "destination": "models/diffusion_models/qwen-image-edit/",
+                        "note": "Use huggingface-cli download Qwen/Qwen-Image-Edit-2509 to download all files"
+                    }
+                ]
+            },
+            {
+                "name": "Qwen-Image-Edit-2509-Q5_0-GGUF",
+                "type": "checkpoint",
+                "description": "Quantized GGUF model (Q5_0) - RTX 5090 compatible (~14.4 GB VRAM)",
+                "url": "https://huggingface.co/QuantStack/Qwen-Image-Edit-2509-GGUF",
+                "size": "14.4 GB",
+                "vram_requirement": "~18-20 GB",
+                "quality_loss": "<3%",
+                "files": [
+                    {
+                        "filename": "Qwen-Image-Edit-2509-Q5_0.gguf",
+                        "url": "https://huggingface.co/QuantStack/Qwen-Image-Edit-2509-GGUF/resolve/main/Qwen-Image-Edit-2509-Q5_0.gguf",
+                        "destination": "models/unet/",
+                        "size": "14.4 GB"
+                    }
+                ],
+                "dependencies": {
+                    "comfyui_node": "ComfyUI-GGUF by city96",
+                    "node_url": "https://github.com/city96/ComfyUI-GGUF"
+                }
+            }
+        ],
+        "vae": [
+            {
+                "name": "Qwen-Image-VAE",
+                "type": "vae",
+                "description": "VAE for Qwen-Image-Edit models",
+                "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2509/tree/main/vae",
+                "files": [
+                    {
+                        "filename": "qwen_image_vae.safetensors",
+                        "url": "https://huggingface.co/Qwen/Qwen-Image-Edit-2509/resolve/main/vae/diffusion_pytorch_model.safetensors",
+                        "destination": "models/vae/",
+                        "note": "Download and rename to qwen_image_vae.safetensors"
+                    }
+                ]
+            }
+        ],
+        "text_encoders": [
+            {
+                "name": "Qwen2.5-VL-7B-FP8",
+                "type": "text_encoder",
+                "description": "FP8 quantized text encoder for Qwen-Image-Edit (lower VRAM)",
+                "url": "https://huggingface.co/nvidia/Qwen2.5-VL-7B-Instruct-FP8",
+                "files": [
+                    {
+                        "filename": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                        "url": "https://huggingface.co/nvidia/Qwen2.5-VL-7B-Instruct-FP8/resolve/main/model.safetensors",
+                        "destination": "models/text_encoders/",
+                        "note": "Download and rename to qwen_2.5_vl_7b_fp8_scaled.safetensors"
+                    }
+                ]
+            },
+            {
+                "name": "Qwen3-8B",
+                "type": "text_encoder",
+                "description": "Qwen3-8B CLIP text encoder model for Qwen-Image-Edit",
+                "url": "https://huggingface.co/Qwen/Qwen3-8B",
+                "files": [
+                    {
+                        "filename": "qwen_3.safetensors",
+                        "url": "https://huggingface.co/Qwen/Qwen3-8B",
+                        "destination": "models/text_encoders/",
+                        "note": "Download full Qwen3-8B model using huggingface-cli"
+                    }
+                ]
+            }
+        ],
+        "loras": [
+            {
+                "name": "Qwen-Image-Edit-Lightning-4steps",
+                "type": "lora",
+                "description": "Lightning LoRA for 4-step fast generation (distillation)",
+                "url": "https://huggingface.co/lightx2v/Qwen-Image-Lightning/tree/main/Qwen-Image-Edit-2509",
+                "size_bf16": "850 MB",
+                "size_fp32": "1.7 GB",
+                "files": [
+                    {
+                        "filename": "Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+                        "url": "https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors",
+                        "destination": "models/loras/",
+                        "size": "850 MB"
+                    }
+                ]
+            },
+            {
+                "name": "Qwen-Image-Edit-Lightning-8steps",
+                "type": "lora",
+                "description": "Lightning LoRA for 8-step balanced quality/speed generation",
+                "url": "https://huggingface.co/lightx2v/Qwen-Image-Lightning/tree/main/Qwen-Image-Edit-2509",
+                "size_bf16": "850 MB",
+                "size_fp32": "1.7 GB",
+                "files": [
+                    {
+                        "filename": "Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors",
+                        "url": "https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors",
+                        "destination": "models/loras/",
+                        "size": "850 MB"
+                    }
+                ]
+            },
+            {
+                "name": "Next-Scene-v2",
+                "type": "lora",
+                "description": "Cinematic scene progression with camera dynamics (V2 - improved quality)",
+                "url": "https://huggingface.co/lovis93/next-scene-qwen-image-lora-2509",
+                "downloads": "23.2k/month",
+                "files": [
+                    {
+                        "filename": "next-scene_lora-v2-3000.safetensors",
+                        "url": "https://huggingface.co/lovis93/next-scene-qwen-image-lora-2509/resolve/main/next-scene_lora-v2-3000.safetensors",
+                        "destination": "models/loras/"
+                    }
+                ]
+            },
+            {
+                "name": "Multiple-Angles",
+                "type": "lora",
+                "description": "Camera control - move, rotate, wide-angle, close-up shots",
+                "url": "https://huggingface.co/dx8152/Qwen-Edit-2509-Multiple-angles",
+                "downloads": "87.7k/month",
+                "files": [
+                    {
+                        "filename": "Qwen-Edit-2509-Multiple-angles.safetensors",
+                        "url": "https://huggingface.co/dx8152/Qwen-Edit-2509-Multiple-angles/resolve/main/Qwen-Edit-2509-Multiple-angles.safetensors",
+                        "destination": "models/loras/"
+                    }
+                ],
+                "dependencies": [
+                    {
+                        "name": "Qwen-Image-Lightning",
+                        "url": "https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/qwen_image_lightning.safetensors",
+                        "destination": "models/loras/"
+                    }
+                ]
+            },
+            {
+                "name": "Light-Migration",
+                "type": "lora",
+                "description": "Transfer lighting and color tone from reference image",
+                "url": "https://huggingface.co/dx8152/Qwen-Edit-2509-Light-Migration",
+                "downloads": "736/month",
+                "files": [
+                    {
+                        "filename": "Qwen-Edit-2509-Light-Migration.safetensors",
+                        "url": "https://huggingface.co/dx8152/Qwen-Edit-2509-Light-Migration/resolve/main/Qwen-Edit-2509-Light-Migration.safetensors",
+                        "destination": "models/loras/"
+                    }
+                ]
+            },
+            {
+                "name": "Best-Face-Swap",
+                "type": "lora",
+                "description": "High-quality face swapping with identity preservation",
+                "url": "https://huggingface.co/Alissonerdx/BFS-Best-Face-Swap",
+                "downloads": "12k/month",
+                "files": [
+                    {
+                        "filename": "BFS-Best-Face-Swap.safetensors",
+                        "url": "https://huggingface.co/Alissonerdx/BFS-Best-Face-Swap/resolve/main/BFS-Best-Face-Swap.safetensors",
+                        "destination": "models/loras/"
+                    }
+                ]
+            }
+        ]
+    },
+    "notes": {
+        "installation": "Download files using: huggingface-cli download <repo_id> <filename> or use the provided URLs",
+        "requirements": {
+            "z_image": "Requires ComfyUI with diffusers support and Z-Image nodes",
+            "qwen_image_edit": "Requires ComfyUI with Qwen-Image-Edit support and diffusers library"
+        },
+        "vram": {
+            "z_image": "Z-Image-Turbo requires ~16GB VRAM for 1024x1024 generation, use GGUF versions for lower VRAM",
+            "qwen_image_edit": "Qwen-Image-Edit-2509 requires ~20GB VRAM for optimal performance"
+        },
+        "performance": {
+            "z_image": "8-step generation with sub-second inference on RTX 5090/H800",
+            "qwen_image_edit": "Multi-image editing with excellent consistency preservation"
+        },
+        "total_size": {
+            "z_image_only": "~22.5 GB (main model + controlnet + loras + vae + text encoder)",
+            "qwen_image_edit_only": "~58.8 GB (main model + loras)",
+            "juggernaut_xl_only": "~6.46 GB (checkpoint with baked VAE)",
+            "all_suites": "~88-90 GB total (Z-Image + Qwen-Image-Edit + Juggernaut XL)",
+            "recommended_disk_space": "120-150 GB (including ComfyUI, Python env, and workspace)"
+        }
+    },
+    "juggernaut_xl": {
+        "description": "Juggernaut XL Ragnarok - Photorealistic SDXL checkpoint for NSFW/SFW generation",
+        "url": "https://civitai.com/models/133005/juggernaut-xl",
+        "base_model": "SDXL 1.0",
+        "models": [
+            {
+                "name": "Juggernaut XL Ragnarok",
+                "type": "checkpoint",
+                "version": "Ragnarok (Latest - May 2025)",
+                "description": "Photorealistic SDXL model with excellent hand/feet detail, supports NSFW/SFW. VAE baked in.",
+                "size": "~6.46 GB",
+                "url": "https://civitai.com/models/133005?modelVersionId=1759168",
+                "download_url": "https://civitai.com/api/download/models/1759168",
+                "files": [
+                    {
+                        "filename": "juggernautXL_ragnarokBy.safetensors",
+                        "url": "https://civitai.com/api/download/models/1759168",
+                        "destination": "models/checkpoints/",
+                        "size": "6.46 GB"
+                    }
+                ],
+                "settings": {
+                    "sampler": "DPM++ 2M SDE",
+                    "steps": "30-40",
+                    "cfg_scale": "3-6 (lower is more realistic)",
+                    "resolution": "832x1216 (portrait) or any SDXL resolution",
+                    "vae": "Built-in (no separate VAE needed)",
+                    "hires_fix": "4xNMKD-Siax_200k with 15 steps, 0.3 denoise, 1.5 upscale"
+                },
+                "features": [
+                    "Photorealism excellence",
+                    "Improved hands and feet",
+                    "Digital painting support",
+                    "Better poses and anatomy",
+                    "NSFW/SFW versatile",
+                    "No separate VAE required",
+                    "Compatible with SDXL LoRAs"
+                ],
+                "notes": [
+                    "Use minimal or no negative prompts initially",
+                    "Lower CFG (3-6) produces more realistic results",
+                    "Excellent for inpainting with ComfyUI VAEEncodeForInpaint node",
+                    "Can be used in pipeline: Flux/Pixelwave → Juggernaut XL Ragnarok",
+                    "Supports all standard SDXL features",
+                    "License allows commercial use with attribution"
+                ]
+            }
+        ],
+        "recommended_loras": [
+            {
+                "name": "Detail Enhancer",
+                "description": "Further enhance photorealistic details",
+                "note": "Check CivitAI for compatible SDXL LoRAs"
+            }
+        ],
+        "use_cases": {
+            "photorealistic_portraits": "Excellent for realistic human portraits with proper anatomy",
+            "nsfw_generation": "High-quality NSFW content with realistic skin and details",
+            "inpainting": "Use with ComfyUI inpaint nodes for precise local editing",
+            "character_creation": "Versatile for creating consistent characters",
+            "commercial_use": "Allowed with attribution per CreativeML Open RAIL++-M license"
+        }
+    }
+}

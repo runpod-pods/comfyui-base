@@ -148,6 +148,26 @@ nohup filebrowser &> /filebrowser.log &
 start_jupyter
 start_helper_web
 
+# Download models if needed (first time setup or if models are missing)
+DOWNLOAD_MODELS_SCRIPT="/workspace/download_models.sh"
+MODELS_DOWNLOADED_FLAG="$COMFYUI_DIR/.models_downloaded"
+
+if [ -f "$DOWNLOAD_MODELS_SCRIPT" ] && [ ! -f "$MODELS_DOWNLOADED_FLAG" ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Downloading models for first time setup..."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    chmod +x "$DOWNLOAD_MODELS_SCRIPT"
+    bash "$DOWNLOAD_MODELS_SCRIPT"
+    
+    # Create flag file to indicate models have been downloaded
+    if [ $? -eq 0 ]; then
+        touch "$MODELS_DOWNLOADED_FLAG"
+        echo "✓ Models downloaded successfully"
+    else
+        echo "⚠ Model download encountered errors, but continuing..."
+    fi
+fi
+
 # Create default comfyui_args.txt if it doesn't exist
 ARGS_FILE="/workspace/runpod-slim/comfyui_args.txt"
 if [ ! -f "$ARGS_FILE" ]; then
