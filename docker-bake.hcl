@@ -33,13 +33,13 @@ target "dev" {
 target "devpush" {
   inherits = ["common"]
   dockerfile = "Dockerfile"
-  tags = ["runpod/comfyui:dev"]
+  tags = ["soyoanon/comfyui:dev"]
 }
 
 target "devpush5090" {
   inherits = ["common"]
   dockerfile = "Dockerfile.5090"
-  tags = ["runpod/comfyui:dev-5090"]
+  tags = ["soyoanon/comfyui:dev-5090"]
 }
 
 # RTX 5090 optimized image (CUDA 12.8 + latest PyTorch build)
