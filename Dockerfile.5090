@@ -161,6 +161,10 @@ EXPOSE 8188 8189 22 8888 8080
 # Copy helper web UI assets
 COPY webui /workspace/webui
 
+# Copy model download script
+COPY download_models.sh /workspace/download_models.sh
+RUN chmod +x /workspace/download_models.sh
+
 # Copy and set up start script
 COPY start.5090.sh /start.sh
 RUN chmod +x /start.sh
