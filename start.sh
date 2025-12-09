@@ -193,25 +193,27 @@ if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
         for node_dir in */; do
             if [ -d "$node_dir" ]; then
                 echo "Checking dependencies for $node_dir..."
-                cd "$COMFYUI_DIR/custom_nodes/$node_dir"
-                
-                # Check for requirements.txt
-                if [ -f "requirements.txt" ]; then
-                    echo "Installing requirements.txt for $node_dir"
-                    pip install --no-cache-dir -r requirements.txt
-                fi
-
-                # Check for install.py
-                if [ -f "install.py" ]; then
-                    echo "Running install.py for $node_dir"
-                    python install.py
-                fi
-
-                # Check for setup.py
-                if [ -f "setup.py" ]; then
-                    echo "Running setup.py for $node_dir"
-                    pip install --no-cache-dir -e .
-                fi
+                (
+                    cd "$COMFYUI_DIR/custom_nodes/$node_dir"
+                    
+                    # Check for requirements.txt
+                    if [ -f "requirements.txt" ]; then
+                        echo "Installing requirements.txt for $node_dir"
+                        pip install --no-cache-dir -r requirements.txt
+                    fi
+    
+                    # Check for install.py
+                    if [ -f "install.py" ]; then
+                        echo "Running install.py for $node_dir"
+                        python install.py
+                    fi
+    
+                    # Check for setup.py
+                    if [ -f "setup.py" ]; then
+                        echo "Running setup.py for $node_dir"
+                        pip install --no-cache-dir -e .
+                    fi
+                )
             fi
         done
     fi
@@ -226,12 +228,14 @@ else
     for node_dir in */; do
         if [ -d "$node_dir" ]; then
             echo "Checking dependencies for $node_dir..."
+            # Subroutine - cd makes the loop end at the first custom_node
+            (
             cd "$COMFYUI_DIR/custom_nodes/$node_dir"
             
             # Check for requirements.txt
             if [ -f "requirements.txt" ]; then
                 echo "Installing requirements.txt for $node_dir"
-                uv pip install --no-cache -r requirements.txt
+                pip install --no-cache-dir -r requirements.txt
             fi
             
             # Check for install.py
@@ -243,8 +247,9 @@ else
             # Check for setup.py
             if [ -f "setup.py" ]; then
                 echo "Running setup.py for $node_dir"
-                uv pip install --no-cache -e .
+                pip install --no-cache-dir -e .
             fi
+            )
         fi
     done
 fi
