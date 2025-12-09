@@ -34,10 +34,9 @@ echo -e "${GREEN}  1. Downloading Z-Image-Turbo Models${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 # Z-Image-Turbo Main Model
-echo -e "${YELLOW}📦 Downloading Z-Image-Turbo main model...${NC}"
+echo -e "${YELLOW}📦 Downloading Z-Image-Turbo main model (BF16, sharded)...${NC}"
 huggingface-cli download Tongyi-MAI/Z-Image-Turbo \
-    diffusion_pytorch_model.safetensors \
-    model_index.json \
+    --include "transformer/*" "model_index.json" \
     --local-dir "$COMFYUI_DIR/models/diffusion_models/Z-Image-Turbo"
 
 # Z-Image ControlNet Union
@@ -47,14 +46,14 @@ huggingface-cli download alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union \
     --local-dir "$COMFYUI_DIR/models/controlnet"
 
 # Z-Image LoRAs
-echo -e "${YELLOW}📦 Downloading Z-Image De-Turbo LoRA...${NC}"
+echo -e "${YELLOW}📦 Downloading Z-Image De-Turbo LoRA (BF16)...${NC}"
 huggingface-cli download ostris/Z-Image-De-Turbo \
-    z_image_de_turbo.safetensors \
+    z_image_de_turbo_v1_bf16.safetensors \
     --local-dir "$COMFYUI_DIR/models/loras"
 
 echo -e "${YELLOW}📦 Downloading Z-Image AIO LoRA...${NC}"
-huggingface-cli download Omarito/Z-Image-Turbo-AIO-LoRA \
-    Z-Image-Turbo-AIO-LoRA.safetensors \
+huggingface-cli download SeeSee21/Z-Image-Turbo-AIO \
+    z-image-turbo-bf16-aio.safetensors \
     --local-dir "$COMFYUI_DIR/models/loras"
 
 # Z-Image VAE
@@ -67,13 +66,10 @@ mv /tmp/z-image-vae/vae/diffusion_pytorch_model.safetensors \
 rm -rf /tmp/z-image-vae
 
 # Z-Image Text Encoder
-echo -e "${YELLOW}📦 Downloading Z-Image Text Encoder...${NC}"
+echo -e "${YELLOW}📦 Downloading Z-Image Text Encoder (BF16, sharded)...${NC}"
 huggingface-cli download Tongyi-MAI/Z-Image-Turbo \
-    text_encoder/model.safetensors \
-    --local-dir /tmp/z-image-te
-mv /tmp/z-image-te/text_encoder/model.safetensors \
-    "$COMFYUI_DIR/models/text_encoders/z_image_text_encoder.safetensors"
-rm -rf /tmp/z-image-te
+    --include "text_encoder/*" \
+    --local-dir "$COMFYUI_DIR/models/text_encoders/z-image-turbo"
 
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  2. Downloading Qwen-Image-Edit-2509 Models (Quantized)${NC}"
@@ -138,26 +134,31 @@ huggingface-cli download dx8152/Qwen-Edit-2509-Multiple-angles \
     --local-dir "$COMFYUI_DIR/models/loras"
 
 echo -e "${YELLOW}  - Light-Migration LoRA...${NC}"
-huggingface-cli download dx8152/Qwen-Edit-2509-Light-migration \
-    Qwen-Edit-2509-Light-migration.safetensors \
+huggingface-cli download dx8152/Qwen-Edit-2509-Light-Migration \
+    Qwen-Edit-2509-Light-Migration.safetensors \
     --local-dir "$COMFYUI_DIR/models/loras"
 
 echo -e "${YELLOW}  - Best-Face-Swap LoRA...${NC}"
-huggingface-cli download 7777cd/best-face-swap-qwen-image-lora \
-    best_face_swap_lora_1.safetensors \
+huggingface-cli download Alissonerdx/BFS-Best-Face-Swap \
+    BFS-Best-Face-Swap.safetensors \
     --local-dir "$COMFYUI_DIR/models/loras"
 
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}  3. Downloading Juggernaut XL Ragnarok${NC}"
+echo -e "${GREEN}  3. Downloading Juggernaut XL Ragnarok (from CivitAI)${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-echo -e "${YELLOW}📦 Downloading Juggernaut XL Ragnarok checkpoint (6.46 GB)...${NC}"
-huggingface-cli download RunDiffusion/Juggernaut-XI-v11 \
-    JuggernautXI_v11_RunDiffusionPhoto.safetensors \
-    --local-dir /tmp/juggernaut
-mv /tmp/juggernaut/JuggernautXI_v11_RunDiffusionPhoto.safetensors \
-    "$COMFYUI_DIR/models/checkpoints/juggernautXL_ragnarokBy.safetensors"
-rm -rf /tmp/juggernaut
+# CivitAI download requires API key: export CIVITAI_API_KEY=your_key
+if [ -z "${CIVITAI_API_KEY:-}" ]; then
+    echo -e "${YELLOW}CIVITAI_API_KEY not set. Skipping Juggernaut XL Ragnarok download.${NC}"
+else
+    echo -e "${YELLOW}📦 Downloading Juggernaut XL Ragnarok checkpoint (6.46 GB) from CivitAI...${NC}"
+    curl -L \
+        -H "Authorization: Bearer ${CIVITAI_API_KEY}" \
+        -o /tmp/juggernautXL_ragnarokBy.safetensors \
+        "https://civitai.com/api/download/models/1759168"
+    mv /tmp/juggernautXL_ragnarokBy.safetensors \
+        "$COMFYUI_DIR/models/checkpoints/juggernautXL_ragnarokBy.safetensors"
+fi
 
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  4. Installing ComfyUI-GGUF Custom Node${NC}"

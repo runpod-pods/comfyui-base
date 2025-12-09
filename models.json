@@ -9,8 +9,28 @@
                 "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo",
                 "files": [
                     {
-                        "filename": "diffusion_pytorch_model.safetensors",
-                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/diffusion_pytorch_model.safetensors",
+                        "filename": "diffusion_pytorch_model-00001-of-00003.safetensors",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/transformer/diffusion_pytorch_model-00001-of-00003.safetensors",
+                        "destination": "models/diffusion_models/"
+                    },
+                    {
+                        "filename": "diffusion_pytorch_model-00002-of-00003.safetensors",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/transformer/diffusion_pytorch_model-00002-of-00003.safetensors",
+                        "destination": "models/diffusion_models/"
+                    },
+                    {
+                        "filename": "diffusion_pytorch_model-00003-of-00003.safetensors",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/transformer/diffusion_pytorch_model-00003-of-00003.safetensors",
+                        "destination": "models/diffusion_models/"
+                    },
+                    {
+                        "filename": "diffusion_pytorch_model.safetensors.index.json",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/transformer/diffusion_pytorch_model.safetensors.index.json",
+                        "destination": "models/diffusion_models/"
+                    },
+                    {
+                        "filename": "config.json",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/transformer/config.json",
                         "destination": "models/diffusion_models/"
                     },
                     {
@@ -44,8 +64,8 @@
                 "url": "https://huggingface.co/ostris/Z-Image-De-Turbo",
                 "files": [
                     {
-                        "filename": "z_image_de_turbo.safetensors",
-                        "url": "https://huggingface.co/ostris/Z-Image-De-Turbo/resolve/main/z_image_de_turbo.safetensors",
+                        "filename": "z_image_de_turbo_v1_bf16.safetensors",
+                        "url": "https://huggingface.co/ostris/Z-Image-De-Turbo/resolve/main/z_image_de_turbo_v1_bf16.safetensors",
                         "destination": "models/loras/"
                     }
                 ]
@@ -57,8 +77,8 @@
                 "url": "https://huggingface.co/SeeSee21/Z-Image-Turbo-AIO",
                 "files": [
                     {
-                        "filename": "z_image_turbo_aio.safetensors",
-                        "url": "https://huggingface.co/SeeSee21/Z-Image-Turbo-AIO/resolve/main/z_image_turbo_aio.safetensors",
+                        "filename": "z-image-turbo-bf16-aio.safetensors",
+                        "url": "https://huggingface.co/SeeSee21/Z-Image-Turbo-AIO/resolve/main/z-image-turbo-bf16-aio.safetensors",
                         "destination": "models/loras/"
                     }
                 ]
@@ -87,8 +107,28 @@
                 "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo",
                 "files": [
                     {
-                        "filename": "model.safetensors",
-                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/text_encoder/model.safetensors",
+                        "filename": "model-00001-of-00003.safetensors",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/text_encoder/model-00001-of-00003.safetensors",
+                        "destination": "models/text_encoders/"
+                    },
+                    {
+                        "filename": "model-00002-of-00003.safetensors",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/text_encoder/model-00002-of-00003.safetensors",
+                        "destination": "models/text_encoders/"
+                    },
+                    {
+                        "filename": "model-00003-of-00003.safetensors",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/text_encoder/model-00003-of-00003.safetensors",
+                        "destination": "models/text_encoders/"
+                    },
+                    {
+                        "filename": "model.safetensors.index.json",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/text_encoder/model.safetensors.index.json",
+                        "destination": "models/text_encoders/"
+                    },
+                    {
+                        "filename": "config.json",
+                        "url": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo/resolve/main/text_encoder/config.json",
                         "destination": "models/text_encoders/"
                     }
                 ]
