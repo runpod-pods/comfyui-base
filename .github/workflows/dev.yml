@@ -16,12 +16,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Clear space to remove unused folders
-        run: |
-          rm -rf /usr/share/dotnet
-          rm -rf /opt/ghc
-          rm -rf "/usr/local/share/boost"
-          rm -rf "$AGENT_TOOLSDIRECTORY"
+      - name: Maximize build disk space
+        uses: easimon/maximize-build-space@v10
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
