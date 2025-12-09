@@ -106,6 +106,20 @@ start_jupyter() {
     echo "Jupyter Lab started"
 }
 
+start_helper_web() {
+    if [ -f "/workspace/webui/web_server.py" ]; then
+        echo "Starting helper web UI on port 8189..."
+        nohup python3 /workspace/webui/web_server.py \
+            --port 8189 \
+            --web-root /workspace/webui \
+            --comfy-root "$COMFYUI_DIR" \
+            --log-file /workspace/runpod-slim/comfyui.log \
+            &> /workspace/runpod-slim/webui.log &
+    else
+        echo "Helper web UI not found, skipping."
+    fi
+}
+
 # ---------------------------------------------------------------------------- #
 #                               Main Program                                     #
 # ---------------------------------------------------------------------------- #
@@ -132,6 +146,7 @@ echo "Starting FileBrowser on port 8080..."
 nohup filebrowser &> /filebrowser.log &
 
 start_jupyter
+start_helper_web
 
 # Create default comfyui_args.txt if it doesn't exist
 ARGS_FILE="/workspace/runpod-slim/comfyui_args.txt"
