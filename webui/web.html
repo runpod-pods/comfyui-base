@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ComfyUI Helper (8189)</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link href="/static/style.css" rel="stylesheet" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="controls">
+          <a href="#" id="open-comfy" target="_blank" class="button success">
+            Open ComfyUI
+          </a>
+          <a href="#" id="open-jupyter" target="_blank" class="button orange">
+            Open JupyterLab
+          </a>
+        </div>
+      </header>
+
+      <div class="section">
+        <div class="section-title">Pre-installed</div>
+        <div class="collapsible open">
+          <div
+            class="collapsible-header"
+            onclick="this.parentElement.classList.toggle('open')"
+          >
+            <span>Custom Nodes (<span id="custom-node-count">0</span>)</span>
+            <span class="toggle-icon">▼</span>
+          </div>
+          <div class="collapsible-content" id="custom-nodes"></div>
+        </div>
+
+        <div class="collapsible open">
+          <div
+            class="collapsible-header"
+            onclick="this.parentElement.classList.toggle('open')"
+          >
+            <span>Installed Models (<span id="model-count">0</span>)</span>
+            <span class="toggle-icon">▼</span>
+          </div>
+          <div class="collapsible-content" id="model-list"></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Logs</div>
+        <div class="log-controls">
+          <div class="auto-scroll-toggle">
+            <span>Auto-scroll</span>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                id="auto-scroll-toggle"
+                checked
+                onchange="toggleAutoScroll()"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        <div id="log-box" class="log-box"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Model Downloaders</div>
+        <div class="downloaders">
+          <div class="tabs">
+            <div
+              id="civitai-tab"
+              class="tab active"
+              onclick="switchTab('civitai')"
+            >
+              Civitai
+            </div>
+            <div
+              id="huggingface-tab"
+              class="tab"
+              onclick="switchTab('huggingface')"
+            >
+              Hugging Face
+            </div>
+            <div
+              id="googledrive-tab"
+              class="tab"
+              onclick="switchTab('googledrive')"
+            >
+              Google Drive
+            </div>
+          </div>
+
+          <div id="civitai-downloader" class="downloader active">
+            <div class="downloader-child">
+              <div style="font-weight: 600; margin-bottom: 8px">
+                Civitai Downloader
+              </div>
+              <label for="modelUrl">Model URL</label>
+              <input
+                type="url"
+                id="modelUrl"
+                placeholder="https://civitai.com/api/download/models/1399707"
+                required
+              />
+              <label for="apiKey">API Key (Optional)</label>
+              <input
+                type="text"
+                id="apiKey"
+                placeholder="Your Civitai API key"
+                class="input-box"
+              />
+              <label for="modelType">Model Type</label>
+              <select id="modelType">
+                <option value="models/checkpoints">Checkpoints</option>
+                <option value="models/vae">VAE</option>
+                <option value="models/unet">UNet</option>
+                <option value="models/diffusion_models">
+                  Diffusion Models
+                </option>
+                <option value="models/text_encoders">Text Encoders</option>
+                <option value="models/loras">LORAs</option>
+                <option value="models/upscale_models">Upscale Models</option>
+                <option value="models/clip">CLIP</option>
+                <option value="models/controlnet">ControlNet</option>
+                <option value="models/clip_vision">CLIP Vision</option>
+                <option value="models/ipadapter">IPAdapter</option>
+              </select>
+              <button
+                onclick="downloadFromCivitai()"
+                class="button"
+                id="civitaibutton"
+              >
+                Download Model
+              </button>
+              <div id="downloadStatus" class="status-message"></div>
+            </div>
+          </div>
+
+          <div id="huggingface-downloader" class="downloader">
+            <div style="font-weight: 600; margin-bottom: 8px">
+              Hugging Face Downloader
+            </div>
+            <label for="hfUrl">Model URL</label>
+            <input
+              type="url"
+              id="hfUrl"
+              placeholder="https://huggingface.co/[user]/[repo]/resolve/main/model.safetensors"
+              required
+            />
+            <label for="hfModelType">Model Type</label>
+            <select id="hfModelType">
+              <option value="models/checkpoints">Checkpoints</option>
+              <option value="models/vae">VAE</option>
+              <option value="models/unet">UNet</option>
+              <option value="models/diffusion_models">Diffusion Models</option>
+              <option value="models/text_encoders">Text Encoders</option>
+              <option value="models/loras">LORAs</option>
+              <option value="models/upscale_models">Upscale Models</option>
+              <option value="models/clip">CLIP</option>
+              <option value="models/controlnet">ControlNet</option>
+              <option value="models/clip_vision">CLIP Vision</option>
+              <option value="models/ipadapter">IPAdapter</option>
+            </select>
+            <button
+              onclick="downloadFromHuggingFace()"
+              class="button"
+              id="huggingfacebutton"
+            >
+              Download Model
+            </button>
+            <div id="hfDownloadStatus" class="status-message"></div>
+          </div>
+
+          <div id="googledrive-downloader" class="downloader">
+            <div style="font-weight: 600; margin-bottom: 8px">
+              Google Drive Downloader
+            </div>
+            <label for="gdUrl">Google Drive URL or ID</label>
+            <input
+              type="text"
+              id="gdUrl"
+              placeholder="https://drive.google.com/file/d/FILEID/view or just FILEID"
+              required
+            />
+            <label for="gdModelType">Model Type</label>
+            <select id="gdModelType">
+              <option value="models/checkpoints">Checkpoints</option>
+              <option value="models/vae">VAE</option>
+              <option value="models/unet">UNet</option>
+              <option value="models/diffusion_models">Diffusion Models</option>
+              <option value="models/text_encoders">Text Encoders</option>
+              <option value="models/loras">LORAs</option>
+              <option value="models/upscale_models">Upscale Models</option>
+              <option value="models/clip">CLIP</option>
+              <option value="models/controlnet">ControlNet</option>
+              <option value="models/clip_vision">CLIP Vision</option>
+              <option value="models/ipadapter">IPAdapter</option>
+            </select>
+            <label for="gdFilename">Filename (Optional)</label>
+            <input
+              type="text"
+              id="gdFilename"
+              placeholder="Leave empty to use original filename"
+            />
+            <button
+              onclick="downloadFromGoogleDrive()"
+              class="button"
+              id="gdrivebutton"
+            >
+              Download Model
+            </button>
+            <div id="gdDownloadStatus" class="status-message"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/static/script.js"></script>
+  </body>
+</html>

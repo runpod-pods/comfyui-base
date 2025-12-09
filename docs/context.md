@@ -83,6 +83,7 @@ Differences in 5090 script:
 ## Ports
 
 - 8188 – ComfyUI
+- 8189 – Helper web UI (logs + model downloaders)
 - 8080 – FileBrowser
 - 8888 – JupyterLab
 - 22 – SSH

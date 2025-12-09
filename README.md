@@ -5,6 +5,7 @@ Run the latest ComfyUI. First start installs dependencies (takes a few minutes),
 ## Access
 
 - `8188`: ComfyUI web UI
+- `8189`: Helper web page (model downloaders, logs)
 - `8080`: FileBrowser (admin / adminadmin12)
 - `8888`: JupyterLab (token via `JUPYTER_PASSWORD`, root at `/workspace`)
 - `22`: SSH (set `PUBLIC_KEY` or check logs for generated root password)
