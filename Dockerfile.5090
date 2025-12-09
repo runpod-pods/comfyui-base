@@ -53,6 +53,13 @@ RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git && \
 RUN python3.12 -m pip install --no-cache-dir \
     torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
+# Install xFormers for CUDA 12.8 (optimized attention for RTX 5090)
+RUN python3.12 -m pip install --no-cache-dir \
+    xformers --index-url https://download.pytorch.org/whl/cu128
+
+# Install TorchAO for additional optimizations (quantization, kernel fusion)
+RUN python3.12 -m pip install --no-cache-dir torchao
+
 WORKDIR /tmp/build/ComfyUI
 RUN python3.12 -m pip install --no-cache-dir -r requirements.txt && \
     python3.12 -m pip install --no-cache-dir GitPython opencv-python
@@ -130,6 +137,11 @@ RUN curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh |
 # Set CUDA environment variables
 ENV PATH=/usr/local/cuda/bin:${PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64
+
+# Performance optimization environment variables for RTX 5090
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+ENV TORCH_CUDNN_V8_API_ENABLED=1
+ENV CUDA_MODULE_LOADING=LAZY
 
 # Install Jupyter with Python kernel
 RUN pip install jupyter

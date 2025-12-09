@@ -50,17 +50,7 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
     
-    - name: Debug - Check workspace
-      run: |
-        echo "Current directory:"
-        pwd
-        echo "Directory contents:"
-        ls -la
-        echo "Checking docker-bake.hcl:"
-        ls -la docker-bake.hcl || echo "File not found"
-        cat docker-bake.hcl || echo "Cannot read file"
-    
-    - name: Build Docker images
+    - name: Build RTX 5090 optimized image
       uses: docker/bake-action@v5
       with:
         push: ${{ github.event_name == 'push' }}
@@ -68,5 +58,4 @@ jobs:
         files: |
           ./docker-bake.hcl
         targets: |
-          devpush
           devpush5090
