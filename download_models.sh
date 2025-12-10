@@ -36,7 +36,10 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo -e "${YELLOW}📦 Downloading Z-Image-Turbo main model (BF16)...${NC}"
 hf download Comfy-Org/z_image_turbo \
     split_files/diffusion_models/z_image_turbo_bf16.safetensors \
-    --local-dir "$COMFYUI_DIR/models"
+    --local-dir /tmp/z-image-models
+mv /tmp/z-image-models/split_files/diffusion_models/z_image_turbo_bf16.safetensors \
+    "$COMFYUI_DIR/models/diffusion_models/"
+rm -rf /tmp/z-image-models
 
 # Z-Image ControlNet Union
 echo -e "${YELLOW}📦 Downloading Z-Image ControlNet Union...${NC}"
@@ -54,13 +57,19 @@ hf download SeeSee21/Z-Image-Turbo-AIO \
 echo -e "${YELLOW}📦 Downloading Z-Image VAE (ae.safetensors)...${NC}"
 hf download Comfy-Org/z_image_turbo \
     split_files/vae/ae.safetensors \
-    --local-dir "$COMFYUI_DIR/models"
+    --local-dir /tmp/z-image-models
+mv /tmp/z-image-models/split_files/vae/ae.safetensors \
+    "$COMFYUI_DIR/models/vae/"
+rm -rf /tmp/z-image-models
 
 # Z-Image Text Encoder
 echo -e "${YELLOW}📦 Downloading Z-Image Text Encoder (Qwen3-4B)...${NC}"
 hf download Comfy-Org/z_image_turbo \
     split_files/text_encoders/qwen_3_4b.safetensors \
-    --local-dir "$COMFYUI_DIR/models"
+    --local-dir /tmp/z-image-models
+mv /tmp/z-image-models/split_files/text_encoders/qwen_3_4b.safetensors \
+    "$COMFYUI_DIR/models/text_encoders/"
+rm -rf /tmp/z-image-models
 
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  2. Downloading Qwen-Image-Edit-2509 Models (Quantized)${NC}"
@@ -70,19 +79,28 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo -e "${YELLOW}📦 Downloading Qwen-Image-Edit-2509 (FP8)...${NC}"
 hf download Comfy-Org/Qwen-Image-Edit_ComfyUI \
     split_files/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors \
-    --local-dir "$COMFYUI_DIR/models"
+    --local-dir /tmp/qwen-models
+mv /tmp/qwen-models/split_files/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors \
+    "$COMFYUI_DIR/models/diffusion_models/"
+rm -rf /tmp/qwen-models
 
 # Qwen-Image VAE
 echo -e "${YELLOW}📦 Downloading Qwen-Image VAE...${NC}"
 hf download Comfy-Org/Qwen-Image_ComfyUI \
     split_files/vae/qwen_image_vae.safetensors \
-    --local-dir "$COMFYUI_DIR/models"
+    --local-dir /tmp/qwen-models
+mv /tmp/qwen-models/split_files/vae/qwen_image_vae.safetensors \
+    "$COMFYUI_DIR/models/vae/"
+rm -rf /tmp/qwen-models
 
 # Qwen2.5-VL-7B FP8 Text Encoder
 echo -e "${YELLOW}📦 Downloading Qwen2.5-VL-7B FP8 text encoder...${NC}"
 hf download Comfy-Org/Qwen-Image_ComfyUI \
     split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors \
-    --local-dir "$COMFYUI_DIR/models"
+    --local-dir /tmp/qwen-models
+mv /tmp/qwen-models/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors \
+    "$COMFYUI_DIR/models/text_encoders/"
+rm -rf /tmp/qwen-models
 
 # Qwen-Image-Edit Lightning LoRAs
 echo -e "${YELLOW}📦 Downloading Qwen-Image-Edit Lightning 4-step LoRA...${NC}"
