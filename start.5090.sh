@@ -148,26 +148,6 @@ nohup filebrowser &> /filebrowser.log &
 start_jupyter
 start_helper_web
 
-# Download models if needed (first time setup or if models are missing)
-DOWNLOAD_MODELS_SCRIPT="/workspace/download_models.sh"
-MODELS_DOWNLOADED_FLAG="$COMFYUI_DIR/.models_downloaded"
-
-if [ -f "$DOWNLOAD_MODELS_SCRIPT" ] && [ ! -f "$MODELS_DOWNLOADED_FLAG" ]; then
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  Downloading models for first time setup..."
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    chmod +x "$DOWNLOAD_MODELS_SCRIPT"
-    bash "$DOWNLOAD_MODELS_SCRIPT"
-    
-    # Create flag file to indicate models have been downloaded
-    if [ $? -eq 0 ]; then
-        touch "$MODELS_DOWNLOADED_FLAG"
-        echo "✓ Models downloaded successfully"
-    else
-        echo "⚠ Model download encountered errors, but continuing..."
-    fi
-fi
-
 # Create default comfyui_args.txt if it doesn't exist
 ARGS_FILE="/workspace/runpod-slim/comfyui_args.txt"
 if [ ! -f "$ARGS_FILE" ]; then
@@ -176,11 +156,13 @@ if [ ! -f "$ARGS_FILE" ]; then
 fi
 
 # Setup ComfyUI if needed
-if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
-    echo "First time setup: Installing ComfyUI and dependencies..."
+if [ ! -f "$COMFYUI_DIR/main.py" ] || [ ! -d "$VENV_DIR" ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  First time setup: Installing ComfyUI and dependencies..."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
-    # Clone ComfyUI if not present
-    if [ ! -d "$COMFYUI_DIR" ]; then
+    # Clone ComfyUI if not present (check for main.py instead of directory)
+    if [ ! -f "$COMFYUI_DIR/main.py" ]; then
         cd /workspace/runpod-slim
         git clone https://github.com/comfyanonymous/ComfyUI.git
     fi
@@ -284,6 +266,26 @@ else
     done
 fi
 
+# Download models if needed (after ComfyUI is fully installed)
+DOWNLOAD_MODELS_SCRIPT="/workspace/download_models.sh"
+MODELS_DOWNLOADED_FLAG="$COMFYUI_DIR/.models_downloaded"
+
+if [ -f "$DOWNLOAD_MODELS_SCRIPT" ] && [ ! -f "$MODELS_DOWNLOADED_FLAG" ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Downloading models..."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    chmod +x "$DOWNLOAD_MODELS_SCRIPT"
+    bash "$DOWNLOAD_MODELS_SCRIPT"
+    
+    # Create flag file to indicate models have been downloaded
+    if [ $? -eq 0 ]; then
+        touch "$MODELS_DOWNLOADED_FLAG"
+        echo "✓ Models downloaded successfully"
+    else
+        echo "⚠ Model download encountered errors, but continuing..."
+    fi
+fi
+
 # Start ComfyUI with custom arguments if provided
 cd $COMFYUI_DIR
 FIXED_ARGS="--listen 0.0.0.0 --port 8188"
@@ -291,15 +293,21 @@ if [ -s "$ARGS_FILE" ]; then
     # File exists and is not empty, combine fixed args with custom args
     CUSTOM_ARGS=$(grep -v '^#' "$ARGS_FILE" | tr '\n' ' ')
     if [ ! -z "$CUSTOM_ARGS" ]; then
-        echo "Starting ComfyUI with additional arguments: $CUSTOM_ARGS"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  Starting ComfyUI with additional arguments: $CUSTOM_ARGS"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         nohup python main.py $FIXED_ARGS $CUSTOM_ARGS &> /workspace/runpod-slim/comfyui.log &
     else
-        echo "Starting ComfyUI with default arguments"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  Starting ComfyUI with default arguments"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         nohup python main.py $FIXED_ARGS &> /workspace/runpod-slim/comfyui.log &
     fi
 else
     # File is empty, use only fixed args
-    echo "Starting ComfyUI with default arguments"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  Starting ComfyUI with default arguments"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     nohup python main.py $FIXED_ARGS &> /workspace/runpod-slim/comfyui.log &
 fi
 
