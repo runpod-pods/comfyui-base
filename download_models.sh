@@ -22,7 +22,6 @@ fi
 
 # Create directories
 mkdir -p "$COMFYUI_DIR/models/checkpoints"
-mkdir -p "$COMFYUI_DIR/models/unet"
 mkdir -p "$COMFYUI_DIR/models/vae"
 mkdir -p "$COMFYUI_DIR/models/text_encoders"
 mkdir -p "$COMFYUI_DIR/models/loras"
@@ -37,8 +36,7 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo -e "${YELLOW}📦 Downloading Z-Image-Turbo main model (BF16)...${NC}"
 hf download Comfy-Org/z_image_turbo \
     split_files/diffusion_models/z_image_turbo_bf16.safetensors \
-    --local-dir "$COMFYUI_DIR/models/diffusion_models" \
-    --local-dir-use-symlinks False
+    --local-dir "$COMFYUI_DIR/models"
 
 # Z-Image ControlNet Union
 echo -e "${YELLOW}📦 Downloading Z-Image ControlNet Union...${NC}"
@@ -47,11 +45,6 @@ hf download alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union \
     --local-dir "$COMFYUI_DIR/models/controlnet"
 
 # Z-Image LoRAs
-echo -e "${YELLOW}📦 Downloading Z-Image De-Turbo LoRA (BF16)...${NC}"
-hf download ostris/Z-Image-De-Turbo \
-    z_image_de_turbo_v1_bf16.safetensors \
-    --local-dir "$COMFYUI_DIR/models/loras"
-
 echo -e "${YELLOW}📦 Downloading Z-Image AIO LoRA...${NC}"
 hf download SeeSee21/Z-Image-Turbo-AIO \
     z-image-turbo-bf16-aio.safetensors \
@@ -61,15 +54,13 @@ hf download SeeSee21/Z-Image-Turbo-AIO \
 echo -e "${YELLOW}📦 Downloading Z-Image VAE (ae.safetensors)...${NC}"
 hf download Comfy-Org/z_image_turbo \
     split_files/vae/ae.safetensors \
-    --local-dir "$COMFYUI_DIR/models/vae" \
-    --local-dir-use-symlinks False
+    --local-dir "$COMFYUI_DIR/models"
 
 # Z-Image Text Encoder
 echo -e "${YELLOW}📦 Downloading Z-Image Text Encoder (Qwen3-4B)...${NC}"
 hf download Comfy-Org/z_image_turbo \
     split_files/text_encoders/qwen_3_4b.safetensors \
-    --local-dir "$COMFYUI_DIR/models/text_encoders" \
-    --local-dir-use-symlinks False
+    --local-dir "$COMFYUI_DIR/models"
 
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  2. Downloading Qwen-Image-Edit-2509 Models (Quantized)${NC}"
@@ -79,22 +70,19 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo -e "${YELLOW}📦 Downloading Qwen-Image-Edit-2509 (FP8)...${NC}"
 hf download Comfy-Org/Qwen-Image-Edit_ComfyUI \
     split_files/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors \
-    --local-dir "$COMFYUI_DIR/models/diffusion_models" \
-    --local-dir-use-symlinks False
+    --local-dir "$COMFYUI_DIR/models"
 
 # Qwen-Image VAE
 echo -e "${YELLOW}📦 Downloading Qwen-Image VAE...${NC}"
 hf download Comfy-Org/Qwen-Image_ComfyUI \
     split_files/vae/qwen_image_vae.safetensors \
-    --local-dir "$COMFYUI_DIR/models/vae" \
-    --local-dir-use-symlinks False
+    --local-dir "$COMFYUI_DIR/models"
 
 # Qwen2.5-VL-7B FP8 Text Encoder
 echo -e "${YELLOW}📦 Downloading Qwen2.5-VL-7B FP8 text encoder...${NC}"
 hf download Comfy-Org/Qwen-Image_ComfyUI \
     split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors \
-    --local-dir "$COMFYUI_DIR/models/text_encoders" \
-    --local-dir-use-symlinks False
+    --local-dir "$COMFYUI_DIR/models"
 
 # Qwen-Image-Edit Lightning LoRAs
 echo -e "${YELLOW}📦 Downloading Qwen-Image-Edit Lightning 4-step LoRA...${NC}"
@@ -152,36 +140,13 @@ else
         "$COMFYUI_DIR/models/checkpoints/juggernautXL_ragnarokBy.safetensors"
 fi
 
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}  4. Installing ComfyUI-GGUF Custom Node${NC}"
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-
-# Install ComfyUI-GGUF for Q5_0 model support
-if [ ! -d "$COMFYUI_DIR/custom_nodes/ComfyUI-GGUF" ]; then
-    echo -e "${YELLOW}📦 Cloning ComfyUI-GGUF...${NC}"
-    cd "$COMFYUI_DIR/custom_nodes"
-    git clone https://github.com/city96/ComfyUI-GGUF
-    cd ComfyUI-GGUF
-    
-    # Activate venv if exists
-    if [ -d "$COMFYUI_DIR/.venv-cu128" ]; then
-        source "$COMFYUI_DIR/.venv-cu128/bin/activate"
-    fi
-    
-    if [ -f "requirements.txt" ]; then
-        pip install -r requirements.txt
-    fi
-else
-    echo -e "${GREEN}✓ ComfyUI-GGUF already installed${NC}"
-fi
-
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║                    Download Complete!                          ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${GREEN}✓ Z-Image-Turbo models downloaded${NC}"
-echo -e "${GREEN}✓ Qwen-Image-Edit-2509 (Q5_0 GGUF) downloaded${NC}"
+echo -e "${GREEN}✓ Qwen-Image-Edit-2509 (FP8) downloaded${NC}"
 echo -e "${GREEN}✓ Juggernaut XL Ragnarok downloaded${NC}"
 echo -e "${GREEN}✓ All LoRAs and supporting files downloaded${NC}"
 echo ""
@@ -189,5 +154,4 @@ echo -e "${YELLOW}📊 Total disk usage:${NC}"
 du -sh "$COMFYUI_DIR/models" 2>/dev/null || echo "Unable to calculate"
 echo ""
 echo -e "${GREEN}🚀 Ready to start ComfyUI!${NC}"
-echo -e "${YELLOW}Run: bash start.5090.sh${NC}"
 echo ""
