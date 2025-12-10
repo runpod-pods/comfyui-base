@@ -34,86 +34,78 @@ echo -e "${GREEN}  1. Downloading Z-Image-Turbo Models${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 # Z-Image-Turbo Main Model
-echo -e "${YELLOW}📦 Downloading Z-Image-Turbo main model (BF16, sharded)...${NC}"
-huggingface-cli download Tongyi-MAI/Z-Image-Turbo \
-    --include "transformer/*" "model_index.json" \
-    --local-dir "$COMFYUI_DIR/models/diffusion_models/Z-Image-Turbo"
+echo -e "${YELLOW}📦 Downloading Z-Image-Turbo main model (BF16)...${NC}"
+hf download Comfy-Org/z_image_turbo \
+    split_files/diffusion_models/z_image_turbo_bf16.safetensors \
+    --local-dir "$COMFYUI_DIR/models/diffusion_models" \
+    --local-dir-use-symlinks False
 
 # Z-Image ControlNet Union
 echo -e "${YELLOW}📦 Downloading Z-Image ControlNet Union...${NC}"
-huggingface-cli download alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union \
+hf download alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union \
     Z-Image-Turbo-Fun-Controlnet-Union.safetensors \
     --local-dir "$COMFYUI_DIR/models/controlnet"
 
 # Z-Image LoRAs
 echo -e "${YELLOW}📦 Downloading Z-Image De-Turbo LoRA (BF16)...${NC}"
-huggingface-cli download ostris/Z-Image-De-Turbo \
+hf download ostris/Z-Image-De-Turbo \
     z_image_de_turbo_v1_bf16.safetensors \
     --local-dir "$COMFYUI_DIR/models/loras"
 
 echo -e "${YELLOW}📦 Downloading Z-Image AIO LoRA...${NC}"
-huggingface-cli download SeeSee21/Z-Image-Turbo-AIO \
+hf download SeeSee21/Z-Image-Turbo-AIO \
     z-image-turbo-bf16-aio.safetensors \
     --local-dir "$COMFYUI_DIR/models/loras"
 
-# Z-Image VAE
-echo -e "${YELLOW}📦 Downloading Z-Image VAE...${NC}"
-huggingface-cli download Tongyi-MAI/Z-Image-Turbo \
-    vae/diffusion_pytorch_model.safetensors \
-    --local-dir /tmp/z-image-vae
-mv /tmp/z-image-vae/vae/diffusion_pytorch_model.safetensors \
-    "$COMFYUI_DIR/models/vae/z_image_vae.safetensors"
-rm -rf /tmp/z-image-vae
+# Z-Image VAE (Flux 1 VAE)
+echo -e "${YELLOW}📦 Downloading Z-Image VAE (ae.safetensors)...${NC}"
+hf download Comfy-Org/z_image_turbo \
+    split_files/vae/ae.safetensors \
+    --local-dir "$COMFYUI_DIR/models/vae" \
+    --local-dir-use-symlinks False
 
 # Z-Image Text Encoder
-echo -e "${YELLOW}📦 Downloading Z-Image Text Encoder (BF16, sharded)...${NC}"
-huggingface-cli download Tongyi-MAI/Z-Image-Turbo \
-    --include "text_encoder/*" \
-    --local-dir "$COMFYUI_DIR/models/text_encoders/z-image-turbo"
+echo -e "${YELLOW}📦 Downloading Z-Image Text Encoder (Qwen3-4B)...${NC}"
+hf download Comfy-Org/z_image_turbo \
+    split_files/text_encoders/qwen_3_4b.safetensors \
+    --local-dir "$COMFYUI_DIR/models/text_encoders" \
+    --local-dir-use-symlinks False
 
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  2. Downloading Qwen-Image-Edit-2509 Models (Quantized)${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-# Qwen-Image-Edit Q5_0 GGUF (RTX 5090 optimized)
-echo -e "${YELLOW}📦 Downloading Qwen-Image-Edit-2509-Q5_0.gguf (14.4 GB)...${NC}"
-huggingface-cli download QuantStack/Qwen-Image-Edit-2509-GGUF \
-    Qwen-Image-Edit-2509-Q5_0.gguf \
-    --local-dir "$COMFYUI_DIR/models/unet"
+# Qwen-Image-Edit-2509 Main Model (FP8)
+echo -e "${YELLOW}📦 Downloading Qwen-Image-Edit-2509 (FP8)...${NC}"
+hf download Comfy-Org/Qwen-Image-Edit_ComfyUI \
+    split_files/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors \
+    --local-dir "$COMFYUI_DIR/models/diffusion_models" \
+    --local-dir-use-symlinks False
 
 # Qwen-Image VAE
 echo -e "${YELLOW}📦 Downloading Qwen-Image VAE...${NC}"
-huggingface-cli download Qwen/Qwen-Image-Edit-2509 \
-    vae/diffusion_pytorch_model.safetensors \
-    --local-dir /tmp/qwen-vae
-mv /tmp/qwen-vae/vae/diffusion_pytorch_model.safetensors \
-    "$COMFYUI_DIR/models/vae/qwen_image_vae.safetensors"
-rm -rf /tmp/qwen-vae
+hf download Comfy-Org/Qwen-Image_ComfyUI \
+    split_files/vae/qwen_image_vae.safetensors \
+    --local-dir "$COMFYUI_DIR/models/vae" \
+    --local-dir-use-symlinks False
 
 # Qwen2.5-VL-7B FP8 Text Encoder
 echo -e "${YELLOW}📦 Downloading Qwen2.5-VL-7B FP8 text encoder...${NC}"
-huggingface-cli download nvidia/Qwen2.5-VL-7B-Instruct-FP8 \
-    model.safetensors \
-    --local-dir /tmp/qwen-te-fp8
-mv /tmp/qwen-te-fp8/model.safetensors \
-    "$COMFYUI_DIR/models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
-rm -rf /tmp/qwen-te-fp8
-
-# Qwen3-8B CLIP Model
-echo -e "${YELLOW}📦 Downloading Qwen3-8B CLIP model...${NC}"
-huggingface-cli download Qwen/Qwen3-8B \
-    --local-dir "$COMFYUI_DIR/models/text_encoders/qwen3-8b"
+hf download Comfy-Org/Qwen-Image_ComfyUI \
+    split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors \
+    --local-dir "$COMFYUI_DIR/models/text_encoders" \
+    --local-dir-use-symlinks False
 
 # Qwen-Image-Edit Lightning LoRAs
 echo -e "${YELLOW}📦 Downloading Qwen-Image-Edit Lightning 4-step LoRA...${NC}"
-huggingface-cli download lightx2v/Qwen-Image-Lightning \
+hf download lightx2v/Qwen-Image-Lightning \
     Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors \
     --local-dir /tmp/lightning-lora
 mv /tmp/lightning-lora/Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors \
     "$COMFYUI_DIR/models/loras/"
 
 echo -e "${YELLOW}📦 Downloading Qwen-Image-Edit Lightning 8-step LoRA...${NC}"
-huggingface-cli download lightx2v/Qwen-Image-Lightning \
+hf download lightx2v/Qwen-Image-Lightning \
     Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors \
     --local-dir /tmp/lightning-lora
 mv /tmp/lightning-lora/Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors \
@@ -124,23 +116,23 @@ rm -rf /tmp/lightning-lora
 echo -e "${YELLOW}📦 Downloading Qwen-Image-Edit popular LoRAs...${NC}"
 
 echo -e "${YELLOW}  - Next-Scene-v2 LoRA...${NC}"
-huggingface-cli download lovis93/next-scene-qwen-image-lora-2509 \
+hf download lovis93/next-scene-qwen-image-lora-2509 \
     next-scene_lora-v2-3000.safetensors \
     --local-dir "$COMFYUI_DIR/models/loras"
 
 echo -e "${YELLOW}  - Multiple-Angles LoRA...${NC}"
-huggingface-cli download dx8152/Qwen-Edit-2509-Multiple-angles \
-    Qwen-Edit-2509-Multiple-angles.safetensors \
+hf download dx8152/Qwen-Edit-2509-Multiple-angles \
+    镜头转换.safetensors \
     --local-dir "$COMFYUI_DIR/models/loras"
 
 echo -e "${YELLOW}  - Light-Migration LoRA...${NC}"
-huggingface-cli download dx8152/Qwen-Edit-2509-Light-Migration \
-    Qwen-Edit-2509-Light-Migration.safetensors \
+hf download dx8152/Qwen-Edit-2509-Light-Migration \
+    参考色调.safetensors \
     --local-dir "$COMFYUI_DIR/models/loras"
 
-echo -e "${YELLOW}  - Best-Face-Swap LoRA...${NC}"
-huggingface-cli download Alissonerdx/BFS-Best-Face-Swap \
-    BFS-Best-Face-Swap.safetensors \
+echo -e "${YELLOW}  - Best-Face-Swap LoRA (Face v1)...${NC}"
+hf download Alissonerdx/BFS-Best-Face-Swap \
+    bfs_face_v1_qwen_image_edit_2509.safetensors \
     --local-dir "$COMFYUI_DIR/models/loras"
 
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
