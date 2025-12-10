@@ -14,13 +14,20 @@ echo -e "${GREEN}║          ComfyUI Model Downloader for RTX 5090             
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
+# Check if ComfyUI is installed
+if [ ! -f "$COMFYUI_DIR/main.py" ]; then
+    echo -e "${RED}Error: ComfyUI is not installed at $COMFYUI_DIR${NC}"
+    echo -e "${RED}Please install ComfyUI first before downloading models.${NC}"
+    exit 1
+fi
+
 # Check if huggingface-cli is installed
 if ! command -v huggingface-cli &> /dev/null; then
     echo -e "${YELLOW}Installing huggingface-cli...${NC}"
     pip install -U "huggingface_hub[cli]"
 fi
 
-# Create directories
+# Create model directories only when needed
 mkdir -p "$COMFYUI_DIR/models/checkpoints"
 mkdir -p "$COMFYUI_DIR/models/vae"
 mkdir -p "$COMFYUI_DIR/models/text_encoders"
@@ -140,17 +147,10 @@ echo -e "${GREEN}  3. Downloading Juggernaut XL Ragnarok (from CivitAI)${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 # CivitAI download requires API key: export CIVITAI_API_KEY=your_key
-if [ -z "${CIVITAI_API_KEY:-}" ]; then
-    echo -e "${YELLOW}CIVITAI_API_KEY not set. Skipping Juggernaut XL Ragnarok download.${NC}"
-else
-    echo -e "${YELLOW}📦 Downloading Juggernaut XL Ragnarok checkpoint (6.46 GB) from CivitAI...${NC}"
-    curl -L \
-        -H "Authorization: Bearer ${CIVITAI_API_KEY}" \
-        -o /tmp/juggernautXL_ragnarokBy.safetensors \
-        "https://civitai.com/api/download/models/1759168"
-    mv /tmp/juggernautXL_ragnarokBy.safetensors \
-        "$COMFYUI_DIR/models/checkpoints/juggernautXL_ragnarokBy.safetensors"
-fi
+echo -e "${YELLOW}📦 Downloading Juggernaut XL Ragnarok checkpoint (6.46 GB) from CivitAI...${NC}"
+curl -L \
+    -o "$COMFYUI_DIR/models/checkpoints/juggernautXL_ragnarokBy.safetensors" \
+    "https://civitai.com/api/download/models/1759168"
 
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
