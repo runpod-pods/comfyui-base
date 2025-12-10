@@ -47,12 +47,6 @@ hf download alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union \
     Z-Image-Turbo-Fun-Controlnet-Union.safetensors \
     --local-dir "$COMFYUI_DIR/models/controlnet"
 
-# Z-Image LoRAs
-echo -e "${YELLOW}📦 Downloading Z-Image AIO LoRA...${NC}"
-hf download SeeSee21/Z-Image-Turbo-AIO \
-    z-image-turbo-bf16-aio.safetensors \
-    --local-dir "$COMFYUI_DIR/models/loras"
-
 # Z-Image VAE (Flux 1 VAE)
 echo -e "${YELLOW}📦 Downloading Z-Image VAE (ae.safetensors)...${NC}"
 hf download Comfy-Org/z_image_turbo \
