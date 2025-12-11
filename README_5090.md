@@ -1,10 +1,11 @@
 [![Watch the video](https://i3.ytimg.com/vi/JovhfHhxqdM/hqdefault.jpg)](https://www.youtube.com/watch?v=JovhfHhxqdM)
 
-Run the latest ComfyUI. First start installs dependencies (takes a few minutes), then when you see this in the logs, ComfyUI is ready to be used: `[ComfyUI-Manager] All startup tasks have been completed.`
+Run the latest ComfyUI. First start installs dependencies (takes a few minutes), then when you see this in the logs, ComfyUI is ready to be used: `[ComfyUI-Manager] All startup tasks have been completed.` If multiple GPUs are assigned to a pod, it will create an instance of ComfyUI per each GPU.
 
 ## Access
 
-- `8188`: ComfyUI web UI
+- `8188`: ComfyUI web UI (for a singular GPU)
+- `8188+n`: ComfyUI web UI (for multiple GPUs, starts with `8188` for the first GPU, increments upwards per each GPU)
 - `8080`: FileBrowser (admin / adminadmin12)
 - `8888`: JupyterLab (token via `JUPYTER_PASSWORD`, root at `/workspace`)
 - `22`: SSH (set `PUBLIC_KEY` or check logs for generated root password)
@@ -29,3 +30,4 @@ Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
 - `/workspace/runpod-slim/ComfyUI`: ComfyUI install
 - `/workspace/runpod-slim/comfyui_args.txt`: ComfyUI args
 - `/workspace/runpod-slim/filebrowser.db`: FileBrowser DB
+
