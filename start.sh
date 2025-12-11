@@ -249,24 +249,39 @@ else
     done
 fi
 
-# Start ComfyUI with custom arguments if provided
+# Start ComfyUI instances per detected GPU with custom arguments if provided
 cd $COMFYUI_DIR
-FIXED_ARGS="--listen 0.0.0.0 --port 8188"
+FIXED_ARGS="--listen 0.0.0.0"
+CUSTOM_ARGS=""
 if [ -s "$ARGS_FILE" ]; then
     # File exists and is not empty, combine fixed args with custom args
     CUSTOM_ARGS=$(grep -v '^#' "$ARGS_FILE" | tr '\n' ' ')
     if [ ! -z "$CUSTOM_ARGS" ]; then
-        echo "Starting ComfyUI with additional arguments: $CUSTOM_ARGS"
-        nohup python main.py $FIXED_ARGS $CUSTOM_ARGS &> /workspace/runpod-slim/comfyui.log &
-    else
-        echo "Starting ComfyUI with default arguments"
-        nohup python main.py $FIXED_ARGS &> /workspace/runpod-slim/comfyui.log &
+        echo "Additional ComfyUI arguments: $CUSTOM_ARGS"
     fi
-else
-    # File is empty, use only fixed args
-    echo "Starting ComfyUI with default arguments"
-    nohup python main.py $FIXED_ARGS &> /workspace/runpod-slim/comfyui.log &
 fi
 
-# Tail the log file
-tail -f /workspace/runpod-slim/comfyui.log
+# Determine GPU count (default to 1 if detection fails)
+GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l)
+if [ -z "$GPU_COUNT" ] || [ "$GPU_COUNT" -le 0 ]; then
+    GPU_COUNT=1
+fi
+
+echo "Detected $GPU_COUNT GPU(s); starting one ComfyUI instance per GPU"
+
+LOG_FILES=()
+for (( gpu=0; gpu<GPU_COUNT; gpu++ )); do
+    port=$((8188 + gpu))
+    log_file="/workspace/runpod-slim/comfyui_gpu${gpu}.log"
+    LOG_FILES+=("$log_file")
+
+    echo "Starting ComfyUI on GPU ${gpu} with --port ${port}"
+    if [ -n "$CUSTOM_ARGS" ]; then
+        nohup python main.py $FIXED_ARGS --port "$port" --cuda-device "$gpu" $CUSTOM_ARGS &> "$log_file" &
+    else
+        nohup python main.py $FIXED_ARGS --port "$port" --cuda-device "$gpu" &> "$log_file" &
+    fi
+done
+
+# Tail log files from all instances
+tail -f "${LOG_FILES[@]}"
