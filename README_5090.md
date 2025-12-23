@@ -1,6 +1,6 @@
 [![Watch the video](https://i3.ytimg.com/vi/JovhfHhxqdM/hqdefault.jpg)](https://www.youtube.com/watch?v=JovhfHhxqdM)
 
-Run the latest ComfyUI. First start installs dependencies (takes a few minutes), then when you see this in the logs, ComfyUI is ready to be used: `[ComfyUI-Manager] All startup tasks have been completed.`
+Run the latest ComfyUI optimized for NVIDIA Blackwell architecture (RTX 5090, B200). First start installs dependencies (takes a few minutes), then when you see this in the logs, ComfyUI is ready to be used: `[ComfyUI-Manager] All startup tasks have been completed.`
 
 ## Access
 
@@ -14,6 +14,10 @@ Run the latest ComfyUI. First start installs dependencies (takes a few minutes),
 - ComfyUI-Manager
 - ComfyUI-KJNodes
 - Civicomfy
+
+## Source Code
+
+This is an open source template. Source code available at: [github.com/runpod-workers/comfyui-base](https://github.com/runpod-workers/comfyui-base)
 
 ## Custom Arguments
 

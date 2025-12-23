@@ -15,6 +15,10 @@ Run the latest ComfyUI. First start installs dependencies (takes a few minutes),
 - ComfyUI-KJNodes
 - Civicomfy
 
+## Source Code
+
+This is an open source template. Source code available at: [github.com/runpod-workers/comfyui-base](https://github.com/runpod-workers/comfyui-base)
+
 ## Custom Arguments
 
 Edit `/workspace/runpod-slim/comfyui_args.txt` (one arg per line):
