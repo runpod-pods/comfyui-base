@@ -1,6 +1,6 @@
 [![Watch the video](https://i3.ytimg.com/vi/JovhfHhxqdM/hqdefault.jpg)](https://www.youtube.com/watch?v=JovhfHhxqdM)
 
-Run the latest ComfyUI. First start installs dependencies (takes a few minutes), then when you see this in the logs, ComfyUI is ready to be used: `[ComfyUI-Manager] All startup tasks have been completed.`
+Run the latest ComfyUI. All dependencies are pre-installed in the image. On first boot, ComfyUI is copied to your workspace — when you see `[ComfyUI-Manager] All startup tasks have been completed.` in the logs, it's ready to use.
 
 ## Access
 
@@ -14,6 +14,7 @@ Run the latest ComfyUI. First start installs dependencies (takes a few minutes),
 - ComfyUI-Manager
 - ComfyUI-KJNodes
 - Civicomfy
+- ComfyUI-RunpodDirect
 
 ## Source Code
 

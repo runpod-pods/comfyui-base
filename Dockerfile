@@ -153,6 +153,7 @@ RUN apt-get update && \
     net-tools \
     iputils-ping \
     procps \
+    openssl \
     ffmpeg \
     && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
     && dpkg -i cuda-keyring_1.1-1_all.deb \

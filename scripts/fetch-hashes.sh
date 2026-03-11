@@ -34,7 +34,7 @@ fi
 # --- Read current hash from bake file (variable block spans multiple lines) ---
 get_current_hash() {
   local var_name="$1"
-  grep -A2 "variable \"${var_name}\"" "$BAKE_FILE" | grep -oP 'default\s*=\s*"\K[^"]*' || echo "unknown"
+  grep -A2 "variable \"${var_name}\"" "$BAKE_FILE" | sed -n 's/.*default *= *"\([^"]*\)".*/\1/p' | head -1 || echo "unknown"
 }
 
 # --- Fetch latest commit SHA (short, 12 chars) ---
@@ -46,7 +46,7 @@ fetch_latest_sha() {
     "https://api.github.com/repos/${repo}/commits?per_page=1" 2>/dev/null) || {
     echo "ERROR" ; return
   }
-  echo "$response" | grep -oP '"sha"\s*:\s*"\K[a-f0-9]{12}' | head -1
+  echo "$response" | sed -n 's/.*"sha" *: *"\([a-f0-9]\{12\}\).*/\1/p' | head -1
 }
 
 # --- Main ---

@@ -80,15 +80,17 @@ def main():
         (CACHE_DIR / fname).write_bytes(data)
 
     # Fetch paginated registry and save as aggregated JSON
+    # Non-fatal: if the registry is down, Manager will fetch on first start
     print("  Fetching ComfyRegistry (paginated)...")
-    nodes = fetch_registry_all()
+    try:
+        nodes = fetch_registry_all()
+        registry_data = json.dumps(nodes, separators=(",", ":"))
+        fname = cache_filename(REGISTRY_URL)
+        (CACHE_DIR / fname).write_bytes(registry_data.encode())
+        print(f"  Cached {len(nodes)} registry nodes")
+    except Exception as e:
+        print(f"  WARNING: Registry fetch failed ({e}), skipping — Manager will fetch on first start")
 
-    # Save in the same format ComfyUI-Manager expects
-    registry_data = json.dumps(nodes, separators=(",", ":"))
-    fname = cache_filename(REGISTRY_URL)
-    (CACHE_DIR / fname).write_bytes(registry_data.encode())
-
-    print(f"  Cached {len(nodes)} registry nodes")
     print(f"Done. {len(list(CACHE_DIR.iterdir()))} cache files written.")
 
 
