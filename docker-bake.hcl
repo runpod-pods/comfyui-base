@@ -76,6 +76,7 @@ target "regular" {
   tags = [
     "runpod/comfyui:${TAG}",
     "runpod/comfyui:latest",
+    "runpod/comfyui:cuda12.8",
   ]
 }
 
@@ -94,7 +95,7 @@ target "devpush" {
 
 target "devpush5090" {
   inherits = ["common"]
-  tags = ["runpod/comfyui:dev-5090"]
+  tags = ["runpod/comfyui:dev-cuda13.0"]
   args = {
     TORCH_VERSION       = TORCH_VERSION_5090
     TORCHVISION_VERSION = TORCHVISION_VERSION_5090
@@ -110,6 +111,7 @@ target "rtx5090" {
   tags = [
     "runpod/comfyui:${TAG}-5090",
     "runpod/comfyui:latest-5090",
+    "runpod/comfyui:cuda13.0",
   ]
   args = {
     TORCH_VERSION       = TORCH_VERSION_5090

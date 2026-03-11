@@ -21,6 +21,7 @@ All notable changes to this project will be documented in this file.
 - `scripts/prebake-manager-cache.py` to pre-populate ComfyUI-Manager cache at build time, reducing cold start time.
 - ComfyUI-RunpodDirect added as a pre-installed custom node.
 - Git init with tagged commits and upstream remotes at build time so ComfyUI-Manager can detect versions.
+- CUDA-versioned Docker image tags: `runpod/comfyui:cuda12.8` and `runpod/comfyui:cuda13.0` (alongside existing `latest`/`slim` tags).
 - FileBrowser pinned to a specific version with SHA256 checksum verification.
 - PyTorch 2.10.0 + torchvision 0.25.0 + torchaudio 2.10.0 for both images.
 - Separate PyTorch version pins for regular and 5090 images so versions can diverge independently.
