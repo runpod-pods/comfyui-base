@@ -70,13 +70,13 @@ target "common" {
   }
 }
 
-# Regular ComfyUI image (CUDA 12.8)
+# Regular ComfyUI image (CUDA 12.8 — default)
 target "regular" {
   inherits = ["common"]
   tags = [
-    "runpod/comfyui:${TAG}",
-    "runpod/comfyui:latest",
+    "runpod/comfyui:${TAG}-cuda12.8",
     "runpod/comfyui:cuda12.8",
+    "runpod/comfyui:latest",
   ]
 }
 
@@ -90,10 +90,10 @@ target "dev" {
 # Dev push targets (for CI pushing dev tags, without overriding latest)
 target "devpush" {
   inherits = ["common"]
-  tags = ["runpod/comfyui:dev"]
+  tags = ["runpod/comfyui:dev-cuda12.8"]
 }
 
-target "devpush5090" {
+target "devpush-cuda13" {
   inherits = ["common"]
   tags = ["runpod/comfyui:dev-cuda13.0"]
   args = {
@@ -105,12 +105,11 @@ target "devpush5090" {
   }
 }
 
-# RTX 5090 / Blackwell image (CUDA 13.0 + latest PyTorch build)
-target "rtx5090" {
+# CUDA 13.0 image (Blackwell / RTX 5090+)
+target "cuda13" {
   inherits = ["common"]
   tags = [
-    "runpod/comfyui:${TAG}-5090",
-    "runpod/comfyui:latest-5090",
+    "runpod/comfyui:${TAG}-cuda13.0",
     "runpod/comfyui:cuda13.0",
   ]
   args = {

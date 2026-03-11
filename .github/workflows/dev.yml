@@ -36,13 +36,13 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push 5090 dev image
+      - name: Build and push CUDA 13.0 dev image
         uses: docker/bake-action@v5
         with:
           push: ${{ inputs.push }}
           files: ./docker-bake.hcl
           targets: |
-            devpush5090
+            devpush-cuda13
 
       - name: Clean up Docker build cache
         run: |
