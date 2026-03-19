@@ -33,13 +33,18 @@ get_current_hash() {
 fetch_latest_sha() {
   local repo="$1"
   local response
-  local auth_args=""
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    auth_args="-H Authorization: Bearer $GITHUB_TOKEN"
+  local auth_header=""
+  [[ -n "${GITHUB_TOKEN:-}" ]] && auth_header="Authorization: Bearer $GITHUB_TOKEN"
+
+  if [[ -n "$auth_header" ]]; then
+    response=$(curl -fsSL -H "$auth_header" \
+      -H "Accept: application/vnd.github.v3+json" \
+      "https://api.github.com/repos/${repo}/commits?per_page=1" 2>/dev/null) || { echo "ERROR"; return; }
+  else
+    response=$(curl -fsSL \
+      -H "Accept: application/vnd.github.v3+json" \
+      "https://api.github.com/repos/${repo}/commits?per_page=1" 2>/dev/null) || { echo "ERROR"; return; }
   fi
-  response=$(curl -fsSL $auth_args \
-    -H "Accept: application/vnd.github.v3+json" \
-    "https://api.github.com/repos/${repo}/commits?per_page=1" 2>/dev/null) || { echo "ERROR"; return; }
   echo "$response" | sed -n 's/.*"sha" *: *"\([a-f0-9]\{12\}\).*/\1/p' | head -1
 }
 
