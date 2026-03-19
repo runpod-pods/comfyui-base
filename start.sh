@@ -144,7 +144,7 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
     echo "  Reinstalling deps for $NODE_COUNT custom nodes"
     echo "  This may take several minutes"
     echo "============================================="
-    rm -rf "$OLD_VENV_DIR"
+    mv "$OLD_VENV_DIR" "${OLD_VENV_DIR}.bak"
     cd "$COMFYUI_DIR"
     python3.12 -m venv --system-site-packages "$VENV_DIR"
     source "$VENV_DIR/bin/activate"
@@ -168,6 +168,8 @@ if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
     echo "Upgrading ComfyUI requirements..."
     pip install --upgrade -r "$COMFYUI_DIR/requirements.txt" 2>&1 | grep -E "^(Successfully|ERROR)" || true
     echo "Migration complete — $INSTALLED user nodes processed (${NODE_COUNT} total, baked nodes skipped)"
+    echo "Old venv backed up at ${OLD_VENV_DIR}.bak — delete it to free space:"
+    echo "  rm -rf ${OLD_VENV_DIR}.bak"
 fi
 
 # Setup ComfyUI if needed
@@ -212,7 +214,10 @@ if [ -s "$ARGS_FILE" ]; then
 fi
 
 echo "Starting ComfyUI with args: $FIXED_ARGS"
-python main.py $FIXED_ARGS || true
+python main.py $FIXED_ARGS &
+COMFY_PID=$!
+trap "kill $COMFY_PID 2>/dev/null" SIGTERM SIGINT
+wait $COMFY_PID || true
 
 echo "============================================="
 echo "  ComfyUI crashed — check the logs above."
@@ -222,5 +227,4 @@ echo "    cd $COMFYUI_DIR && source .venv-cu128/bin/activate"
 echo "    python main.py $FIXED_ARGS"
 echo "============================================="
 
-# Keep container alive for debugging
 sleep infinity
