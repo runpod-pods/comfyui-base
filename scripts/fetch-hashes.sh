@@ -5,16 +5,18 @@
 # Usage:
 #   ./scripts/fetch-hashes.sh              # uses unauthenticated API
 #   GITHUB_TOKEN=ghp_xxx ./scripts/fetch-hashes.sh  # authenticated (higher rate limit)
+#
+# Works on both Linux (bash 4+) and macOS (bash 3.2).
 
 set -euo pipefail
 
-# --- Config: repo -> variable name ---
-declare -A REPOS=(
-  ["ltdrdata/ComfyUI-Manager"]="MANAGER_SHA"
-  ["kijai/ComfyUI-KJNodes"]="KJNODES_SHA"
-  ["MoonGoblinDev/Civicomfy"]="CIVICOMFY_SHA"
-  ["MadiatorLabs/ComfyUI-RunpodDirect"]="RUNPODDIRECT_SHA"
-)
+# --- Config: repo|variable pairs (no associative arrays — macOS compat) ---
+NODES="
+ltdrdata/ComfyUI-Manager|MANAGER_SHA
+kijai/ComfyUI-KJNodes|KJNODES_SHA
+MoonGoblinDev/Civicomfy|CIVICOMFY_SHA
+MadiatorLabs/ComfyUI-RunpodDirect|RUNPODDIRECT_SHA
+"
 
 # --- Resolve paths ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,12 +28,12 @@ if [[ ! -f "$BAKE_FILE" ]]; then
 fi
 
 # --- Auth header (optional) ---
-AUTH_HEADER=()
+AUTH_ARGS=""
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  AUTH_HEADER=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  AUTH_ARGS="-H Authorization: Bearer $GITHUB_TOKEN"
 fi
 
-# --- Read current hash from bake file (variable block spans multiple lines) ---
+# --- Read current hash from bake file ---
 get_current_hash() {
   local var_name="$1"
   grep -A2 "variable \"${var_name}\"" "$BAKE_FILE" | sed -n 's/.*default *= *"\([^"]*\)".*/\1/p' | head -1 || echo "unknown"
@@ -41,11 +43,15 @@ get_current_hash() {
 fetch_latest_sha() {
   local repo="$1"
   local response
-  response=$(curl -fsSL "${AUTH_HEADER[@]}" \
-    -H "Accept: application/vnd.github.v3+json" \
-    "https://api.github.com/repos/${repo}/commits?per_page=1" 2>/dev/null) || {
-    echo "ERROR" ; return
-  }
+  if [[ -n "$AUTH_ARGS" ]]; then
+    response=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+      -H "Accept: application/vnd.github.v3+json" \
+      "https://api.github.com/repos/${repo}/commits?per_page=1" 2>/dev/null) || { echo "ERROR"; return; }
+  else
+    response=$(curl -fsSL \
+      -H "Accept: application/vnd.github.v3+json" \
+      "https://api.github.com/repos/${repo}/commits?per_page=1" 2>/dev/null) || { echo "ERROR"; return; }
+  fi
   echo "$response" | sed -n 's/.*"sha" *: *"\([a-f0-9]\{12\}\).*/\1/p' | head -1
 }
 
@@ -56,8 +62,9 @@ echo ""
 
 has_changes=false
 
-for repo in "${!REPOS[@]}"; do
-  var_name="${REPOS[$repo]}"
+echo "$NODES" | while IFS='|' read -r repo var_name; do
+  [[ -z "$repo" ]] && continue
+
   current=$(get_current_hash "$var_name")
   latest=$(fetch_latest_sha "$repo")
 
@@ -73,7 +80,6 @@ for repo in "${!REPOS[@]}"; do
     echo "# ${var_name}: ${current} (unchanged)"
   else
     echo "# ${var_name}: ${current} -> ${latest} (CHANGED)"
-    has_changes=true
   fi
   echo "variable \"${var_name}\" {"
   echo "  default = \"${latest}\""
@@ -81,8 +87,4 @@ for repo in "${!REPOS[@]}"; do
 done
 
 echo ""
-if [[ "$has_changes" == true ]]; then
-  echo "# ^ Copy the variable blocks above into docker-bake.hcl"
-else
-  echo "# All hashes are up to date."
-fi
+echo "# ^ Copy the variable blocks above into docker-bake.hcl"

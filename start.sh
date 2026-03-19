@@ -3,6 +3,7 @@ set -e  # Exit the script if any statement returns a non-true return value
 
 COMFYUI_DIR="/workspace/runpod-slim/ComfyUI"
 VENV_DIR="$COMFYUI_DIR/.venv-cu128"
+OLD_VENV_DIR="$COMFYUI_DIR/.venv"
 FILEBROWSER_CONFIG="/root/.config/filebrowser/config.json"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 
@@ -14,14 +15,9 @@ DB_FILE="/workspace/runpod-slim/filebrowser.db"
 setup_ssh() {
     mkdir -p ~/.ssh
     
-    # Generate host keys if they don't exist
-    for type in rsa dsa ecdsa ed25519; do
-        if [ ! -f "/etc/ssh/ssh_host_${type}_key" ]; then
-            ssh-keygen -t ${type} -f "/etc/ssh/ssh_host_${type}_key" -q -N ''
-            echo "${type^^} key fingerprint:"
-            ssh-keygen -lf "/etc/ssh/ssh_host_${type}_key.pub"
-        fi
-    done
+    if [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+        ssh-keygen -A -q
+    fi
 
     # If PUBLIC_KEY is provided, use it
     if [[ $PUBLIC_KEY ]]; then
@@ -140,6 +136,40 @@ if [ ! -f "$ARGS_FILE" ]; then
     echo "Created empty ComfyUI arguments file at $ARGS_FILE"
 fi
 
+# Migrate old CUDA 12.4 venv to cu128
+if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
+    NODE_COUNT=$(find "$COMFYUI_DIR/custom_nodes" -maxdepth 2 -name "requirements.txt" 2>/dev/null | wc -l)
+    echo "============================================="
+    echo "  CUDA 12.4 -> 12.8 migration"
+    echo "  Reinstalling deps for $NODE_COUNT custom nodes"
+    echo "  This may take several minutes"
+    echo "============================================="
+    rm -rf "$OLD_VENV_DIR"
+    cd "$COMFYUI_DIR"
+    python3.12 -m venv --system-site-packages "$VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+    python -m ensurepip
+    # Skip nodes baked into the image — their deps are in system site-packages
+    BAKED_NODES="ComfyUI-Manager ComfyUI-KJNodes Civicomfy ComfyUI-RunpodDirect"
+    CURRENT=0
+    INSTALLED=0
+    for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
+        if [ -f "$req" ]; then
+            NODE_NAME=$(basename "$(dirname "$req")")
+            case " $BAKED_NODES " in
+                *" $NODE_NAME "*) continue ;;
+            esac
+            CURRENT=$((CURRENT + 1))
+            echo "[$CURRENT] $NODE_NAME"
+            pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+            INSTALLED=$((INSTALLED + 1))
+        fi
+    done
+    echo "Upgrading ComfyUI requirements..."
+    pip install --upgrade -r "$COMFYUI_DIR/requirements.txt" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+    echo "Migration complete — $INSTALLED user nodes processed (${NODE_COUNT} total, baked nodes skipped)"
+fi
+
 # Setup ComfyUI if needed
 if [ ! -d "$COMFYUI_DIR" ] || [ ! -d "$VENV_DIR" ]; then
     echo "First time setup: Copying baked ComfyUI to workspace..."
@@ -171,21 +201,26 @@ fi
 # Warm up pip so ComfyUI-Manager's 5s timeout check doesn't fail on cold start
 python -m pip --version > /dev/null 2>&1
 
-# Start ComfyUI in foreground (exec replaces shell → proper signal handling, logs to stdout)
+# Start ComfyUI — keep container alive if it crashes so SSH/Jupyter remain accessible
 cd $COMFYUI_DIR
 FIXED_ARGS="--listen 0.0.0.0 --port 8188"
 if [ -s "$ARGS_FILE" ]; then
-    # File exists and is not empty, combine fixed args with custom args
     CUSTOM_ARGS=$(grep -v '^#' "$ARGS_FILE" | tr '\n' ' ')
     if [ ! -z "$CUSTOM_ARGS" ]; then
-        echo "Starting ComfyUI with additional arguments: $CUSTOM_ARGS"
-        exec python main.py $FIXED_ARGS $CUSTOM_ARGS
-    else
-        echo "Starting ComfyUI with default arguments"
-        exec python main.py $FIXED_ARGS
+        FIXED_ARGS="$FIXED_ARGS $CUSTOM_ARGS"
     fi
-else
-    # File is empty, use only fixed args
-    echo "Starting ComfyUI with default arguments"
-    exec python main.py $FIXED_ARGS
 fi
+
+echo "Starting ComfyUI with args: $FIXED_ARGS"
+python main.py $FIXED_ARGS || true
+
+echo "============================================="
+echo "  ComfyUI crashed — check the logs above."
+echo "  SSH and JupyterLab are still available."
+echo "  To restart after fixing:"
+echo "    cd $COMFYUI_DIR && source .venv-cu128/bin/activate"
+echo "    python main.py $FIXED_ARGS"
+echo "============================================="
+
+# Keep container alive for debugging
+sleep infinity

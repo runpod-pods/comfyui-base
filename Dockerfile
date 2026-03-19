@@ -98,6 +98,8 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     echo "GitPython" >> requirements.in && \
     echo "opencv-python" >> requirements.in && \
     echo "jupyter" >> requirements.in && \
+    echo "jupyter-resource-usage" >> requirements.in && \
+    echo "jupyterlab-nvdashboard" >> requirements.in && \
     echo "torch==${TORCH_VERSION}" >> constraints.txt && \
     echo "torchvision==${TORCHVISION_VERSION}" >> constraints.txt && \
     echo "torchaudio==${TORCHAUDIO_VERSION}" >> constraints.txt && \
@@ -169,6 +171,11 @@ COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /usr/local/share/jupyter /usr/local/share/jupyter
 
+# Register Jupyter extensions (pip --ignore-installed skips post-install hooks)
+RUN mkdir -p /usr/local/etc/jupyter/jupyter_server_config.d && \
+    echo '{"ServerApp":{"jpserver_extensions":{"jupyter_server_terminals":true,"jupyterlab":true,"jupyter_resource_usage":true,"jupyterlab_nvdashboard":true}}}' \
+    > /usr/local/etc/jupyter/jupyter_server_config.d/extensions.json
+
 # Copy baked ComfyUI + custom nodes from builder stage
 COPY --from=builder /opt/comfyui-baked /opt/comfyui-baked
 
@@ -186,13 +193,19 @@ RUN curl -fSL "https://github.com/filebrowser/filebrowser/releases/download/${FI
 ENV PATH=/usr/local/cuda/bin:${PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64
 
+# Allow container to start on hosts with older CUDA 12.x drivers
+ENV NVIDIA_REQUIRE_CUDA=""
+ENV NVIDIA_DISABLE_REQUIRE=true
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
 # Jupyter is included in the lock file and installed in the builder stage
 
 # Configure SSH for root login
 RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     mkdir -p /run/sshd && \
-    rm -f /etc/ssh/ssh_host_*
+    ssh-keygen -A
 
 # Create workspace directory
 RUN mkdir -p /workspace/runpod-slim
