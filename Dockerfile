@@ -82,12 +82,7 @@ RUN cd /tmp/build/ComfyUI && \
     git init && git add -A && git -c user.name=- -c user.email=- commit -q -m "ComfyUI-RunpodDirect ${RUNPODDIRECT_SHA}" && \
     git remote add origin https://github.com/MadiatorLabs/ComfyUI-RunpodDirect.git
 
-# Install PyTorch (pinned version)
-RUN python3.12 -m pip install --no-cache-dir \
-    torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION} torchaudio==${TORCHAUDIO_VERSION} \
-    --index-url https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}
-
-# Generate lock file from all requirements, then install with hash verification
+# Generate lock file from all requirements (including torch pins), then install with hash verification
 WORKDIR /tmp/build
 RUN cat ComfyUI/requirements.txt > requirements.in && \
     for node_dir in ComfyUI/custom_nodes/*/; do \
@@ -104,8 +99,15 @@ RUN cat ComfyUI/requirements.txt > requirements.in && \
     echo "torchvision==${TORCHVISION_VERSION}" >> constraints.txt && \
     echo "torchaudio==${TORCHAUDIO_VERSION}" >> constraints.txt && \
     echo "pillow>=12.1.1" >> constraints.txt && \
-    PIP_CONSTRAINT=constraints.txt pip-compile --generate-hashes --output-file=requirements.lock --strip-extras --allow-unsafe requirements.in && \
-    python3.12 -m pip install --no-cache-dir --ignore-installed --require-hashes -r requirements.lock
+    TORCH_INDEX_URL="https://download.pytorch.org/whl/${TORCH_INDEX_SUFFIX}" && \
+    PIP_INDEX_URL=https://pypi.org/simple \
+    PIP_EXTRA_INDEX_URL="${TORCH_INDEX_URL}" \
+    PIP_CONSTRAINT=constraints.txt \
+    pip-compile --generate-hashes --output-file=requirements.lock --strip-extras --allow-unsafe requirements.in && \
+    python3.12 -m pip install --no-cache-dir --ignore-installed --require-hashes \
+    --index-url https://pypi.org/simple \
+    --extra-index-url "${TORCH_INDEX_URL}" \
+    -r requirements.lock
 
 # Pre-populate ComfyUI-Manager cache so first cold start skips the slow registry fetch
 COPY scripts/prebake-manager-cache.py /tmp/prebake-manager-cache.py
