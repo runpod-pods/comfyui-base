@@ -16,7 +16,7 @@ variable "CIVICOMFY_SHA" {
   default = "555e984bbcb0"
 }
 variable "RUNPODDIRECT_SHA" {
-  default = "4de8269b5181"
+  default = "6f3a08b8b79c"
 }
 # Regular image (cu128)
 variable "TORCH_VERSION" {
