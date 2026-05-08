@@ -1,0 +1,49 @@
+name: Changesets
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  changesets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - uses: changesets/action@v1
+        id: changesets
+        with:
+          version: npx changeset version
+          commit: "chore: version packages"
+          title: "chore: version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # When the Version Packages PR was merged, the version in
+      # package.json is new but no GitHub Release exists yet — create one.
+      # On normal pushes the version is already released, so this is a no-op.
+      - name: Create GitHub Release if version is new
+        if: steps.changesets.outputs.hasChangesets == 'false'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if gh release view "$VERSION" &>/dev/null; then
+            echo "Release $VERSION already exists, skipping."
+          else
+            echo "Creating release $VERSION..."
+            gh release create "$VERSION" \
+              --title "$VERSION" \
+              --generate-notes
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

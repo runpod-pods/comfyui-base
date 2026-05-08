@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+*" # Trigger on version tags like v1.0.0, v2.1.0, etc.
   release:
     types: [published]
   workflow_dispatch:
@@ -48,21 +45,11 @@ jobs:
 
           # Determine version based on trigger type
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            # Manual trigger: use input version
             VERSION="${{ github.event.inputs.version }}"
-            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "IS_MANUAL_RELEASE=true" >> $GITHUB_ENV
-          elif [[ "${{ github.event_name }}" == "release" ]]; then
-            # GitHub Release published event
-            VERSION="${{ github.event.release.tag_name }}"
-            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "IS_MANUAL_RELEASE=false" >> $GITHUB_ENV
           else
-            # Tag trigger: use tag name (remove refs/tags/ prefix)
-            VERSION=${GITHUB_REF#refs/tags/}
-            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "IS_MANUAL_RELEASE=false" >> $GITHUB_ENV
+            VERSION="${{ github.event.release.tag_name }}"
           fi
+          echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
 
           # Export TAG for docker-bake.hcl variable override
           echo "TAG=${RELEASE_VERSION}" >> $GITHUB_ENV
@@ -91,16 +78,6 @@ jobs:
           files: ./docker-bake.hcl
           targets: |
             regular
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        if: github.event_name != 'release'
-        with:
-          tag_name: ${{ env.RELEASE_VERSION }}
-          name: ${{ env.RELEASE_VERSION }}
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Release Summary
         run: |
