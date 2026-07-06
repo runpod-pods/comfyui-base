@@ -1,0 +1,36 @@
+name: Check Incompatibilities
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Image to check"
+        type: string
+        required: true
+        default: "runpod/comfyui:cuda13.0"
+
+jobs:
+  check-incompatibilities:
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check incompatibilities
+        uses: ./.github/actions/smoke-test
+        with:
+          # smoke-test expects image-refs as a JSON array, so wrap the single
+          # input ref. inputs.image is always set here.
+          image-refs: ${{ format('["{0}"]', inputs.image) }}
+          profile: base
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-jupyter: true
+          check_all_gpu: true
+          manufacturer: Nvidia
+          on-skip: pass
+          test_ports: |
+            - 8188
+            - 8080

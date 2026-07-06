@@ -12,6 +12,12 @@ on:
 jobs:
   dev:
     runs-on: blacksmith-8vcpu-ubuntu-2204
+    # NOTE: image refs are passed to test-dev via an artifact, NOT a job
+    # output. The refs embed the DockerHub namespace, which equals the
+    # DOCKERHUB_USERNAME secret value — and GitHub scrubs any job output
+    # that contains a registered secret to an empty string when it crosses
+    # into a dependent job. That silently fed test-dev an empty --refs.
+    # Artifact file contents are not subject to that scrubbing.
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -37,6 +43,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push CUDA 13.0 dev image
+        id: build-cuda13
         uses: docker/bake-action@v5
         with:
           push: ${{ inputs.push }}
@@ -44,15 +51,97 @@ jobs:
           targets: |
             devpush-cuda13
 
+      - name: Extract image refs
+        id: refs-cuda13
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build-cuda13.outputs.metadata }}
+
       - name: Clean up Docker build cache
         run: |
           docker builder prune -af --filter "until=1h"
           docker system prune -af --volumes
 
       - name: Build and push regular dev image
+        id: build-regular
         uses: docker/bake-action@v5
         with:
           push: ${{ inputs.push }}
           files: ./docker-bake.hcl
           targets: |
             devpush
+
+      - name: Extract image refs
+        id: refs-regular
+        uses: ./.github/actions/image-name
+        with:
+          bake-metadata: ${{ steps.build-regular.outputs.metadata }}
+
+      - name: Combine image refs
+        id: refs
+        shell: bash
+        env:
+          CUDA13_REFS: ${{ steps.refs-cuda13.outputs.refs }}
+          REGULAR_REFS: ${{ steps.refs-regular.outputs.refs }}
+        run: |
+          set -euo pipefail
+          REFS=$(jq -c -n \
+            --argjson cuda13 "${CUDA13_REFS}" \
+            --argjson regular "${REGULAR_REFS}" \
+            '$cuda13 + $regular | unique')
+          # Write to a file for the artifact handoff to test-dev. (Job
+          # outputs can't be used here — they get scrubbed because the
+          # refs contain the DOCKERHUB_USERNAME secret; see job comment.)
+          mkdir -p "${RUNNER_TEMP}/refs"
+          printf '%s\n' "${REFS}" > "${RUNNER_TEMP}/refs/image-refs.json"
+          echo "Combined image refs:"
+          echo "${REFS}" | jq -r '.[]'
+
+      - name: Upload image refs artifact
+        if: inputs.push == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-image-refs
+          path: ${{ runner.temp }}/refs/image-refs.json
+          retention-days: 1
+          if-no-files-found: error
+
+
+  test-dev:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    needs: dev
+    if: needs.dev.result == 'success' && inputs.push == true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download image refs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-image-refs
+          path: ${{ runner.temp }}/refs
+
+      - name: Read image refs
+        id: refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          REFS=$(cat "${RUNNER_TEMP}/refs/image-refs.json")
+          echo "refs=${REFS}" >> "${GITHUB_OUTPUT}"
+          echo "Image refs to smoke-test:"
+          echo "${REFS}" | jq -r '.[]'
+
+      - name: Smoke test
+        uses: ./.github/actions/smoke-test
+        with:
+          image-refs: ${{ steps.refs.outputs.refs }}
+          profile: base
+          runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
+          ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
+          test-jupyter: true
+          on-skip: "warn"
+          test_ports: |
+            - 8188
+            - 8080
