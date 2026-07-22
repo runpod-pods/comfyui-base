@@ -1,6 +1,13 @@
 [![Watch the video](https://i3.ytimg.com/vi/JovhfHhxqdM/hqdefault.jpg)](https://www.youtube.com/watch?v=JovhfHhxqdM)
 
-Run the latest ComfyUI. All dependencies are pre-installed in the image. On first boot, ComfyUI is copied to your workspace — when you see `[ComfyUI-Manager] All startup tasks have been completed.` in the logs, it's ready to use.
+Run the latest ComfyUI with CUDA 12.8. All dependencies are pre-installed in the image. On first boot, ComfyUI is copied to your workspace — when you see `[ComfyUI-Manager] All startup tasks have been completed.` in the logs, it's ready to use.
+
+> **This template is for CUDA 12 only.** It does not support CUDA 13 (Blackwell / RTX 5090).
+> If you need CUDA 13, use our [ComfyUI CUDA 13 template](https://console.runpod.io/hub/template/comfyui-cuda-13?id=2lv7ev3wfp) instead.
+
+## Upgrading from a previous version
+
+If you have an existing pod created with an older version of this template (CUDA 12.4), a one-time migration of the virtual environment will be performed automatically on the next boot to make it compatible with CUDA 12.8. This may take a few extra minutes on first start after the update.
 
 ## Access
 
