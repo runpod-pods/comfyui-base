@@ -2,7 +2,8 @@
 
 Spins up each image on a real Runpod pod, waits for it to stay healthy
 for `DWELL_SEC` seconds, runs an image-appropriate functional check
-(CUDA / `nvidia-smi` / `torch.cuda` / optional JupyterLab), then
+(CUDA / `nvidia-smi` / `torch.cuda` / optional JupyterLab / optional
+per-port HTTP / optional ComfyUI end-to-end image generation), then
 terminates the pod. Designed to catch the failure modes that **only
 appear on a real GPU host** and that local `docker run` would miss:
 driver-version mismatches, broken NCCL/NVRTC, missing CUDA libs,
@@ -117,9 +118,11 @@ runs this sequence and reports the outcome as soon as one step fails.
 | 4 | **JupyterLab in-pod check** (only when `test_jupyter: true`) — see [Jupyter check](#jupyter-check-opt-in). SSH in, wait for `:8888` to bind, `jupyter server list`, `curl /api/status` with token | `FAIL` (`start.sh` didn't bring up Jupyter — usually wrong python interpreter) |
 | 5 | **JupyterLab public-proxy check** (only when `test_jupyter: true`) — `GET https://<pod-id>-8888.proxy.runpod.net/api/status` from the test machine | `FAIL` (port not exposed as `8888/http`, or proxy never registered) |
 | 6 | **Per-port HTTP checks** (only when `test_ports: [...]`) — see [Per-port checks](#per-port-checks-opt-in). For every listed port: SSH in and `curl http://127.0.0.1:<port>/`, then `GET https://<pod-id>-<port>.proxy.runpod.net/` from the test machine. | `FAIL` (service didn't bind, returned `5xx`, or port wasn't exposed as `<port>/http` so the proxy never registered it) |
-| 7 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
-| 8 | `dump_pod_logs` — pull `uname`, `syslog`, `dmesg`, `/var/log/*.log`, `nvidia-smi` via SSH for the run log | _(diagnostic only)_ |
-| 9 | `runpodctl pod delete` (always — even on Ctrl-C / exception via `atexit` + signal handlers) | _(diagnostic only)_ |
+| 7 | **ComfyUI reachability smoke** (when `test_comfyui: true`, also implied by `test_comfyui_functional`) — see [ComfyUI checks](#comfyui-checks-smoke--functional). Probe `:8188` in-pod (`curl 127.0.0.1:8188`) then via the public proxy. | `FAIL` (ComfyUI didn't bind, returned `5xx`, or `:8188` wasn't exposed as `8188/http`) |
+| 8 | **ComfyUI functional check** (only when `test_comfyui_functional: true`) — see [ComfyUI checks](#comfyui-checks-smoke--functional). Host-side against the public proxy URL (no SSH): provision the model(s) via ComfyUI-RunpodDirect's `/server_download/*` routes, POST the workflow to `/prompt`, poll `/history`, fetch the output via `/view` and validate it's a real PNG. Runs only after the reachability smoke (7) passes. | `FAIL` (couldn't provision the model, ComfyUI rejected the workflow, generation errored/timed out, or no valid PNG came out) |
+| 9 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
+| 10 | `dump_pod_logs` — pull `uname`, `syslog`, `dmesg`, `/var/log/*.log`, `nvidia-smi` via SSH for the run log | _(diagnostic only)_ |
+| 11 | `runpodctl pod delete` (always — even on Ctrl-C / exception via `atexit` + signal handlers) | _(diagnostic only)_ |
 
 `test_image()` then iterates over the next instance candidate when the
 result was `UNAVAILABLE` or `STUCK`, and short-circuits on `PASS`,
@@ -244,6 +247,8 @@ groupname:
     - 8188                    #   one row per (image, instance, port) is exercised
     - 8888
     - 8080
+    test_comfyui: true             # ComfyUI reachability smoke on :8188
+    test_comfyui_functional: true  # ComfyUI end-to-end generate-image check
 ```
 
 Field reference:
@@ -260,6 +265,8 @@ Field reference:
 | `min_cuda_version` | `X.Y` string passed to `runpodctl pod create --min-cuda-version`. Only used as a **fallback** when the image tag itself doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`). Image tags like `cu1281` / `cuda1281` always win. |
 | `test_jupyter` | `true` / `false` — when true, the pod is created with `JUPYTER_PASSWORD=admin` in env and HTTP port 8888 exposed, then the script SSHes in and verifies JupyterLab is actually listening **with Jupyter-specific assertions** (`jupyter server list`, `/api/status` with token). Use for groups whose images use `container-template/start.sh` (`runpod/base`, `runpod/pytorch`, `runpod/autoresearch`, `rocm`). Skip for NGC `nvidia-pytorch` (different entrypoint). Default: `false`. |
 | `test_ports` | List of TCP ports the image is expected to serve over HTTP. Each port is exposed as `<port>/http` so Runpod's public proxy registers it, then the runner probes the port twice: (1) in-pod via SSH (`curl http://127.0.0.1:<port>/`), (2) via the public proxy (`https://<pod-id>-<port>.proxy.runpod.net/`). Generic counterpart to `test_jupyter` — no app-specific assertions, just "a server responds with HTTP `<500`". Use for ComfyUI (`8188`), FileBrowser (`8080`), or any app where you only need to verify "it's listening". Can coexist with `test_jupyter: true` (Jupyter on 8888 is still checked with the Jupyter-specific probes; any other port in `test_ports` gets the generic one). Default: empty. |
+| `test_comfyui` | `true` / `false` — ComfyUI **reachability smoke**. A ComfyUI-branded alias for `test_ports: [8188]`: exposes `:8188` as `8188/http` and probes it twice — in-pod (`curl 127.0.0.1:8188`) and via the public Runpod proxy (`https://<pod-id>-8188.proxy.runpod.net/`). Accepts any HTTP `<500`. Answers **"is ComfyUI up and reachable from a browser?"** — not whether it can generate. Cheap (no download, no GPU work). Also enabled implicitly by `test_comfyui_functional`. Default: `false`. |
+| `test_comfyui_functional` | `true` / `false` — ComfyUI **end-to-end functional check**. Proves the image can actually **generate an image**, run **host-side against the public proxy URL** (`https://<pod-id>-8188.proxy.runpod.net`, no SSH): provisions the checkpoint(s) from [`tests/comfyui/models.json`](comfyui/models.json) via the baked-in [ComfyUI-RunpodDirect](https://github.com/MadiatorLabs/ComfyUI-RunpodDirect) node's `/server_download/*` routes, POSTs the workflow [`tests/comfyui/workflows/gsl_starter_1_1.api.json`](comfyui/workflows/gsl_starter_1_1.api.json) (the "1.1 Starter – Text to Image" template) to `/prompt`, polls `/history`, then fetches the result via `/view` and asserts it's a real, non-empty PNG. **Implies `test_comfyui`** — the reachability smoke runs first and the generation only runs if it passes (no point spending GPU time on an unreachable ComfyUI). Heavier: pulls a ~2 GB model + uses GPU time, so gate it behind an enabler. Default: `false`. |
 
 The `base_cpu` group is special: `runpodctl` 2.3.0 does not let us pick
 a specific CPU flavor (`--gpu-id` is rejected for `--compute-type CPU`),
@@ -369,6 +376,13 @@ pytorch:
 | `JUPYTER_PROXY_TIMEOUT` | `60` | Seconds the proxy probe retries while Runpod's ingress registers the new pod. |
 | `PORT_WAIT_TIMEOUT` | `300` | Seconds the in-pod `test_ports` probe waits for a port to bind on `127.0.0.1` AND return an HTTP `<500` response (single unified retry loop, heartbeat every 30s). Fast apps (Jupyter, FileBrowser) exit in <2s. Bump to `900` for ComfyUI cold starts — first-boot `cp -r` of ~8 GB into `/workspace` plus ComfyUI-Manager FETCH can push readiness past 5 minutes. |
 | `PORT_PROXY_TIMEOUT` | `300` | Seconds the public-proxy `test_ports` probe retries waiting for Runpod's ingress to register the new pod. Same override pattern as `PORT_WAIT_TIMEOUT` — bump together when testing slow apps. |
+| `COMFYUI_PORT` | `8188` | Port the ComfyUI HTTP API listens on. The `test_comfyui` reachability probe hits it in-pod + via proxy; the `test_comfyui_functional` check uses it to build the public proxy URL `https://<pod-id>-<port>.proxy.runpod.net`. |
+| `COMFYUI_WORKFLOW` | `tests/comfyui/workflows/gsl_starter_1_1.api.json` | Path to the ComfyUI **API-format** workflow POSTed to `/prompt`. Override to test a different template. |
+| `COMFYUI_MODELS_MANIFEST` | `tests/comfyui/models.json` | Path to the JSON list of models to provision before running (`filename`, `directory` = a ComfyUI `folder_paths` key, `url`, `sha256`). |
+| `COMFYUI_WAIT_TIMEOUT` | `600` | Seconds the `test_comfyui_functional` probe waits for `/system_stats` to answer **through the proxy** (cold ComfyUI cp -r + torch import + Manager fetch + eventually-consistent proxy). |
+| `COMFYUI_DOWNLOAD_TIMEOUT` | `900` | Seconds allowed for RunpodDirect to provision the model(s). DreamShaper 8 pruned is ~2.1 GB. |
+| `COMFYUI_GEN_TIMEOUT` | `300` | Seconds allowed for the generation itself (queue → PNG on disk), including the cold first checkpoint load into VRAM. |
+| `COMFYUI_SAVE_DIR` | _(empty)_ | Local directory to save the generated PNG into (a plain HTTP GET of `/view`, then written as `<pod-id>_<filename>.png`). Empty = validate from the `/view` response only, don't keep a copy (keeps CI stdout light). Set it to actually **see** the image — the pod is deleted right after the check. |
 
 
 ## Functional check
@@ -445,6 +459,105 @@ also includes 8888, the generic check runs in addition to the Jupyter
 one (cheap insurance — they probe slightly different aspects).
 
 
+## ComfyUI checks (smoke + functional)
+
+There are **two** ComfyUI-specific flags, from cheap to thorough. They are
+separate manifest fields, but the functional one implies the smoke one:
+
+| flag | tier | what it proves | cost |
+|---|---|---|---|
+| `test_comfyui: true` | smoke | ComfyUI is **up and reachable** on `:8188` (in-pod + public proxy) | seconds, no GPU work |
+| `test_comfyui_functional: true` | functional | ComfyUI can **actually generate an image** | pulls ~2 GB model + GPU time |
+
+**`test_comfyui` (reachability smoke).** A ComfyUI-branded alias for
+`test_ports: [8188]`: exposes `:8188` as `8188/http`, then probes it
+in-pod (`curl 127.0.0.1:8188`) and through the public Runpod proxy,
+accepting any HTTP `<500`. It only answers "is the server up and reachable
+from a browser?". Use it on every ComfyUI image — it's cheap. (You don't
+also need `test_ports: [8188]`; this replaces it. Keep `test_ports` for
+*other* ports like `8080` FileBrowser.)
+
+**`test_comfyui_functional` (end-to-end).** This answers the question that
+actually matters for a ComfyUI image: **can a user log in, pick a template,
+pull the missing model, run it, and get a picture out?** It mirrors that
+exact flow over the ComfyUI HTTP API, run **entirely host-side against the
+public proxy URL** (`https://<pod-id>-8188.proxy.runpod.net`) — **no SSH and
+no in-pod script**. Model provisioning uses the
+[ComfyUI-RunpodDirect](https://github.com/MadiatorLabs/ComfyUI-RunpodDirect)
+custom node baked into the image, whose `/server_download/*` routes live on
+the same ComfyUI server as `/prompt`, so the whole flow is reachable through
+the proxy — exactly like the **"Download to Pod"** button in ComfyUI's
+missing-models dialog. It **implies `test_comfyui`**: the reachability smoke
+above runs first, so the functional check reuses a proxy path it already knows
+is up (and we never spend GPU time on an unreachable ComfyUI). Because it's
+heavy, gate it behind an enabler (see [Running in CI](#running-in-ci)).
+
+The two shipped assets define the functional flow:
+
+- [`tests/comfyui/workflows/gsl_starter_1_1.api.json`](comfyui/workflows/gsl_starter_1_1.api.json)
+  — the "1.1 Starter – Text to Image" template exported from ComfyUI in
+  **API format** (the shape `/prompt` accepts). It's a minimal SD1.5
+  graph: `CheckpointLoaderSimple` → `CLIPTextEncode` ×2 → `KSampler` →
+  `VAEDecode` → `SaveImage`. The seed is fixed so runs are reproducible.
+- [`tests/comfyui/models.json`](comfyui/models.json) — the checkpoint(s)
+  the workflow needs but the image doesn't bake in. Each entry has a
+  `filename`, target `directory` (a ComfyUI `folder_paths` key, e.g.
+  `checkpoints`), download `url`, and expected `sha256`. The starter
+  template needs `DreamShaper_8_pruned.safetensors` (~2.1 GB).
+
+Steps the host-side probe runs (any failure ⇒ `FAIL` on the pair, with the
+failing reason surfaced):
+
+1. **Wait for the API.** Poll `/system_stats` **through the proxy** until it
+   answers (up to `COMFYUI_WAIT_TIMEOUT` — generous, because a cold container
+   copies ~8 GB of baked ComfyUI into `/workspace` and imports torch before
+   `:8188` binds, and the proxy itself is eventually-consistent).
+2. **Provision the model.** For each entry in `models.json`: first
+   `POST /server_download/verify_model_integrity` — if the file already
+   exists (and its sha256 matches, when known) the download is skipped.
+   Otherwise `POST /server_download/start` (RunpodDirect writes into the
+   right `folder_paths` dir with an 8-connection download and verifies
+   size + sha256 server-side), then poll `GET /server_download/status/...`
+   until `completed`. Requires the RunpodDirect routes to exist — if
+   `GET /server_download/folder_paths` 404s (node missing from the image),
+   the check fails with a clear message rather than silently.
+3. **Confirm visibility.** Hit `/object_info/CheckpointLoaderSimple` and
+   assert the freshly-downloaded checkpoint now shows up in the node's
+   enum (retries briefly to absorb the rescan lag).
+4. **Queue the workflow.** `POST /prompt` with the graph. A non-empty
+   `node_errors` (or an HTTP 4xx with a validation body) fails fast with
+   ComfyUI's own error text.
+5. **Wait for the result.** Poll `/history/<prompt_id>` until the run
+   reports `success` with image outputs, or `error`, or
+   `COMFYUI_GEN_TIMEOUT` elapses.
+6. **Validate the PNG.** `GET /view?...` for the first output and assert
+   it starts with the PNG magic bytes, is non-trivially sized, and has a
+   sane width/height in the IHDR — i.e. a real image, not an error page.
+
+Progress streams live to the host (download + generation take minutes), so
+the run never looks frozen. Because everything is bounded HTTP polling with
+per-request timeouts, there's no risk of a hung SSH pipe leaking a pod. To
+point the check at a different template / model set without touching code,
+override `COMFYUI_WORKFLOW` / `COMFYUI_MODELS_MANIFEST` (both are paths) —
+see the env table below.
+
+```bash
+# Run just the ComfyUI functional check against a specific image tag.
+# (edit tests/comfyui/images.example.yaml to set your real tag first)
+./test_images.py tests/comfyui/images.example.yaml comfyui
+
+# Same, but fetch the generated PNG so you can eyeball it. The pod is
+# terminated right after the check, so this env var is the only way to
+# keep a copy — it lands at ./comfy-out/<pod-id>_smoke_00001_.png.
+COMFYUI_SAVE_DIR=./comfy-out ./test_images.py tests/comfyui/images.example.yaml comfyui
+```
+
+By default the check validates the PNG (magic bytes + IHDR dimensions)
+straight from the `/view` response and doesn't keep it — CI only needs the
+pass/fail signal. `COMFYUI_SAVE_DIR` opts into writing it to disk (a plain
+HTTP GET, no base64/SSH) for local inspection.
+
+
 ## Per-GPU compatibility matrix (`check_all_gpu`)
 
 Default mode tests each image on the manifest's candidate list and
@@ -494,7 +607,8 @@ wraps everything in this script needs for a clean CI run:
 4. Generates a manifest from the `image-refs` JSON array using
    `.github/scripts/generate_test_manifest.py`, applying the
    `profile`, `budget-usd-per-hour`, `min-vram-gb`, `manufacturer`,
-   `test-jupyter`, and `exclude-instances` inputs.
+   `test-jupyter`, `test-comfyui`, `test-comfyui-functional`, `test_ports`,
+   and `exclude-instances` inputs.
 5. Invokes `python3 tests/test_images.py <generated-manifest>` with
    `MAX_PARALLEL=<max-parallel>` and `continue-on-error: true` so a
    single broken image doesn't take the whole pipeline down.
@@ -519,6 +633,23 @@ Typical caller (from a per-image-family build workflow):
 
 The full input reference lives in the action's own `description:`
 fields.
+
+**The ComfyUI functional test is opt-in.** By default CI runs the smoke
+checks (boot + CUDA + Jupyter + ComfyUI reachability on `:8188` +
+FileBrowser on `:8080`). The heavier functional check
+(`test_comfyui_functional` — download the ~2 GB model + generate an image
+on a real GPU) is gated behind an enabler:
+
+* **Dev builds** (`.github/workflows/dev.yml`) always run the ComfyUI
+  reachability smoke (`test-comfyui: true`) and expose a
+  `run_functional_tests` boolean on the `workflow_dispatch` form — leave
+  it unchecked for smoke-only, tick it to also run the functional test.
+  It maps straight to the action's `test-comfyui-functional` input.
+* **Releases** (`.github/workflows/release.yml`) and the
+  incompatibility matrix intentionally run smoke-only.
+* To enable the functional check in any other workflow, pass
+  `test-comfyui-functional: "true"` to the `smoke-test` action (it implies
+  `test-comfyui`, so reachability is covered automatically).
 
 
 ## Troubleshooting

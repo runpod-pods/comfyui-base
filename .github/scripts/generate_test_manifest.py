@@ -41,6 +41,8 @@ def render_yaml(groups: dict) -> str:
             "manufacturer",
             "min_cuda_version",
             "test_jupyter",
+            "test_comfyui",
+            "test_comfyui_functional",
         ):
             if key in body:
                 val = body[key]
@@ -66,6 +68,8 @@ def build_groups(
     min_vram_gb: int,
     manufacturer: str,
     test_jupyter: bool = False,
+    test_comfyui: bool = False,
+    test_comfyui_functional: bool = False,
     check_all_gpu: bool = False,
     test_ports: list[int] | None = None,
     exclude_instances: list[str] | None = None,
@@ -84,6 +88,10 @@ def build_groups(
             body["manufacturer"] = manufacturer
         if test_jupyter:
             body["test_jupyter"] = True
+        if test_comfyui:
+            body["test_comfyui"] = True
+        if test_comfyui_functional:
+            body["test_comfyui_functional"] = True
         if test_ports:
             body["test_ports"] = list(test_ports)
         if exclude_instances:
@@ -125,6 +133,20 @@ def main() -> int:
     ap.add_argument("--min-vram-gb", type=int, default=16)
     ap.add_argument("--manufacturer", default="Nvidia")
     ap.add_argument("--test-jupyter", action="store_true")
+    ap.add_argument(
+        "--test-comfyui",
+        action="store_true",
+        help="Add `test_comfyui: true` to every group: ComfyUI reachability "
+             "SMOKE check — expose :8188 and probe it in-pod + via the public "
+             "proxy. Answers 'is ComfyUI up and reachable?'.",
+    )
+    ap.add_argument(
+        "--test-comfyui-functional",
+        action="store_true",
+        help="Add `test_comfyui_functional: true` to every group: the ComfyUI "
+             "end-to-end FUNCTIONAL check (download model, run workflow, "
+             "validate output PNG) in-pod over SSH. Implies --test-comfyui.",
+    )
     ap.add_argument("--check-all-gpu", action="store_true")
     ap.add_argument(
         "--test-port",
@@ -161,6 +183,8 @@ def main() -> int:
         min_vram_gb=args.min_vram_gb,
         manufacturer=args.manufacturer,
         test_jupyter=args.test_jupyter,
+        test_comfyui=args.test_comfyui,
+        test_comfyui_functional=args.test_comfyui_functional,
         check_all_gpu=args.check_all_gpu,
         test_ports=args.test_port,
         exclude_instances=args.exclude_instance,

@@ -55,6 +55,26 @@ inputs:
       its own entrypoint and would fail the probe.
     required: false
     default: "false"
+  test-comfyui:
+    description: |
+      'true' to add `test_comfyui: true` to every group: the ComfyUI
+      reachability SMOKE check. Exposes :8188 as 8188/http and probes it
+      both in-pod (curl 127.0.0.1:8188) and via the public Runpod proxy.
+      Answers "is ComfyUI up and reachable from a browser?" — NOT whether
+      it can generate. Cheap; safe to leave on for ComfyUI images.
+    required: false
+    default: "false"
+  test-comfyui-functional:
+    description: |
+      'true' to add `test_comfyui_functional: true` to every group: the
+      ComfyUI end-to-end FUNCTIONAL check. After the pod boots, test_images.py
+      SSHes in and downloads the model(s) from tests/comfyui/models.json,
+      POSTs tests/comfyui/workflows/*.api.json to /prompt, polls /history,
+      and asserts a real PNG came out. Heavier (pulls a ~2 GB model + uses
+      GPU time). Implies `test-comfyui` (reachability runs first). Off by
+      default — gate it behind an enabler.
+    required: false
+    default: "false"
   check_all_gpu:
     description: |
       'true' to emit `check_all_gpu: true` for GPU groups. The smoke
@@ -258,6 +278,8 @@ runs:
         MIN_VRAM_GB: ${{ inputs.min-vram-gb }}
         MANUFACTURER: ${{ inputs.manufacturer }}
         TEST_JUPYTER: ${{ inputs.test-jupyter }}
+        TEST_COMFYUI: ${{ inputs.test-comfyui }}
+        TEST_COMFYUI_FUNCTIONAL: ${{ inputs.test-comfyui-functional }}
         CHECK_ALL_GPU: ${{ inputs.check_all_gpu }}
         TEST_PORTS: ${{ inputs.test_ports }}
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
@@ -270,6 +292,12 @@ runs:
         EXTRA_ARGS=()
         if [[ "${TEST_JUPYTER,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-jupyter)
+        fi
+        if [[ "${TEST_COMFYUI,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-comfyui)
+        fi
+        if [[ "${TEST_COMFYUI_FUNCTIONAL,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-comfyui-functional)
         fi
         if [[ "${CHECK_ALL_GPU,,}" == "true" ]]; then
           EXTRA_ARGS+=(--check-all-gpu)
