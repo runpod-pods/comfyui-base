@@ -645,11 +645,26 @@ on a real GPU) is gated behind an enabler:
   `run_functional_tests` boolean on the `workflow_dispatch` form — leave
   it unchecked for smoke-only, tick it to also run the functional test.
   It maps straight to the action's `test-comfyui-functional` input.
-* **Releases** (`.github/workflows/release.yml`) and the
-  incompatibility matrix intentionally run smoke-only.
+* **Releases** (`.github/workflows/release.yml`) always run the full
+  functional check (`test-comfyui-functional: "true"`) and archive the
+  generated image (`save-comfyui-images: "true"`) — a release gates on the
+  image actually being able to generate. The incompatibility matrix
+  intentionally stays smoke-only.
 * To enable the functional check in any other workflow, pass
   `test-comfyui-functional: "true"` to the `smoke-test` action (it implies
   `test-comfyui`, so reachability is covered automatically).
+
+**Inspecting the generated images in CI.** The pod is deleted right after
+the check, so to actually *see* what came out, the `smoke-test` action can
+upload the PNG(s) as a **workflow artifact** (never committed to the repo):
+pass `save-comfyui-images: "true"` and it sets `COMFYUI_SAVE_DIR`, then
+uploads the result as the `comfyui-generated-images` artifact (download it
+from the run's Summary page). It uploads on `always()`, so even a failed
+generation surfaces whatever it produced. `dev.yml` wires this to the same
+`run_functional_tests` toggle, so ticking that box both runs the functional
+test and archives its images. Tune the artifact with
+`comfyui-images-artifact-name` (give parallel calls distinct names) and
+`comfyui-images-retention-days` (default 14).
 
 
 ## Troubleshooting
