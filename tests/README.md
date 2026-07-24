@@ -648,8 +648,12 @@ on a real GPU) is gated behind an enabler:
 * **Releases** (`.github/workflows/release.yml`) always run the full
   functional check (`test-comfyui-functional: "true"`) and archive the
   generated image (`save-comfyui-images: "true"`) — a release gates on the
-  image actually being able to generate. The incompatibility matrix
-  intentionally stays smoke-only.
+  image actually being able to generate.
+* **Incompatibility matrix** (`.github/workflows/check-incompatibilities.yml`)
+  runs the functional check on **every** resolved GPU (`check_all_gpu: true`
+  + `test-comfyui-functional: "true"`) and uploads all the per-GPU PNGs to
+  the `comfyui-generated-images` artifact — that's how it surfaces
+  GPU-specific generation failures (e.g. missing Blackwell kernels).
 * To enable the functional check in any other workflow, pass
   `test-comfyui-functional: "true"` to the `smoke-test` action (it implies
   `test-comfyui`, so reachability is covered automatically).

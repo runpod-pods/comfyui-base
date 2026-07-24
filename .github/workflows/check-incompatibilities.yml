@@ -30,7 +30,14 @@ jobs:
           test-jupyter: true
           check_all_gpu: true
           manufacturer: Nvidia
+          # Smoke: always verify ComfyUI is up + reachable on :8188
+          test-comfyui: true
+          # Run the full ComfyUI functional check on EVERY resolved GPU (that's
+          # the point of this matrix — catch GPU-specific generation failures,
+          # e.g. missing Blackwell kernels). Implies the :8188 reachability
+          # smoke, so 8188 is dropped from test_ports below (only 8080 left).
+          test-comfyui-functional: "true"
+          save-comfyui-images: "true"
           on-skip: pass
           test_ports: |
-            - 8188
             - 8080
