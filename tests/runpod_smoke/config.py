@@ -432,8 +432,9 @@ GROUP_TEST_COMFYUI: dict[str, bool] = {}
 
 # Per-group ComfyUI FUNCTIONAL-check opt-in, populated in main() from the
 # `test_comfyui_functional:` manifest field. When True, `runner.test_pair`
-# runs the end-to-end ComfyUI probe over SSH (download model -> POST
-# workflow -> poll /history -> validate the output PNG).
+# runs the end-to-end ComfyUI probe entirely host-side via the public proxy
+# (no SSH): download model -> POST workflow -> poll /history -> validate the
+# output PNG.
 #
 # The functional check IMPLIES the smoke check: you can't generate an image
 # if ComfyUI isn't reachable, so enabling `test_comfyui_functional` also

@@ -145,7 +145,8 @@ def main() -> int:
         action="store_true",
         help="Add `test_comfyui_functional: true` to every group: the ComfyUI "
              "end-to-end FUNCTIONAL check (download model, run workflow, "
-             "validate output PNG) in-pod over SSH. Implies --test-comfyui.",
+             "validate output PNG) host-side via the public proxy (no SSH). "
+             "Implies --test-comfyui.",
     )
     ap.add_argument("--check-all-gpu", action="store_true")
     ap.add_argument(
