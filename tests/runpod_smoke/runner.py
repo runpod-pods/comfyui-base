@@ -28,6 +28,7 @@ from .checks import (
     run_port_proxy_check,
     ssh_probe,
 )
+from .comfyui import run_comfyui_check
 from .instances import detect_cuda_version, resolve_gpu_id
 from .log import log
 from .pod import (
@@ -107,12 +108,19 @@ def _create_pod_with_retries(
             f"smoketest-{int(time.time())}-"
             f"{threading.get_ident() % 10000:04d}-{attempt}"
         )
+        # Merge the generic test_ports with the ComfyUI smoke port: when
+        # `test_comfyui` (reachability) is on we expose 8188/http so the
+        # public-proxy probe can reach it. de-dup is handled in create_pod.
+        test_ports = list(config.GROUP_TEST_PORTS.get(group) or [])
+        if config.GROUP_TEST_COMFYUI.get(group, False):
+            if config.COMFYUI_PORT not in test_ports:
+                test_ports.append(config.COMFYUI_PORT)
         pod_id, raw = create_pod(
             image, gpu_id, name,
             compute_type="CPU" if is_cpu else "GPU",
             group=group,
             test_jupyter=config.GROUP_TEST_JUPYTER.get(group, False),
-            test_ports=config.GROUP_TEST_PORTS.get(group) or None,
+            test_ports=test_ports or None,
             cloud_type=cloud_override,
             data_center_ids=dc_ids,
         )
@@ -311,6 +319,99 @@ def _run_port_steps(
     return None
 
 
+def _run_comfyui_steps(
+    host: str, port: int, pod_id: str, group: str, image: str,
+) -> Optional[_Outcome]:
+    """ComfyUI checks, two tiers driven by two manifest flags:
+
+      1. SMOKE (`test_comfyui: true`, also implied by the functional flag)
+         — reachability of ComfyUI on :8188, probed twice: in-pod over SSH
+         (`curl 127.0.0.1:8188`) and via the public Runpod proxy. Answers
+         "is ComfyUI up and reachable from a browser?".
+
+      2. FUNCTIONAL (`test_comfyui_functional: true`) — the end-to-end
+         "can it actually generate an image" gate. Runs entirely HOST-SIDE
+         against the public proxy URL (no SSH): provision the model(s) from
+         tests/comfyui/models.json via ComfyUI-RunpodDirect's
+         /server_download/* routes -> POST tests/comfyui/workflows/*.api.json
+         to /prompt -> poll /history -> fetch via /view and assert a real
+         PNG. Only runs AFTER the smoke reachability passes (no point
+         spending GPU time if ComfyUI never came up — and the functional
+         check reuses that same proxy path).
+
+    Any failure is a FAIL on the whole pair. Output streams live (download
+    + generation take minutes) so the run doesn't look frozen."""
+    reach = config.GROUP_TEST_COMFYUI.get(group, False)
+    func = config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False)
+    if not (host and port and (reach or func)):
+        return None
+
+    cp = config.COMFYUI_PORT
+
+    # --- Tier 1: reachability smoke (in-pod + public proxy) ---------------
+    log(
+        f"running ComfyUI reachability check (in-pod) on :{cp} "
+        f"for group '{group}'...",
+        indent=2,
+    )
+    ok, last_line = run_port_check(
+        host, port, cp,
+        on_line=lambda line: log(f"  {line}", indent=2),
+    )
+    if not ok:
+        log(
+            f"ComfyUI reachability (in-pod) FAILED -- "
+            f"{last_line or 'ComfyUI did not bind / returned HTTP 5xx'}",
+            indent=2,
+        )
+        dump_pod_logs(pod_id, image)
+        return "FAIL", f"ComfyUI reachability check failed (in-pod) on :{cp}"
+    log("ComfyUI reachability (in-pod) passed", indent=2)
+
+    log(
+        f"running ComfyUI reachability check (public proxy) on :{cp} "
+        f"for pod {pod_id}...",
+        indent=2,
+    )
+    ok, output = run_port_proxy_check(pod_id, cp)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    if not ok:
+        log(
+            f"ComfyUI reachability (public proxy) FAILED -- "
+            f"likely not exposed as {cp}/http",
+            indent=2,
+        )
+        dump_pod_logs(pod_id, image)
+        return "FAIL", f"ComfyUI reachability check failed (public proxy) on :{cp}"
+    log("ComfyUI reachability (public proxy) passed", indent=2)
+
+    # --- Tier 2: end-to-end functional generation ------------------------
+    if not func:
+        return None
+
+    log(
+        f"running ComfyUI functional check (via proxy) for group '{group}'...",
+        indent=2,
+    )
+    ok, last_line = run_comfyui_check(
+        pod_id,
+        on_line=lambda line: log(f"  {line}", indent=2),
+        save_dir=config.COMFYUI_SAVE_DIR,
+        tag=pod_id,
+    )
+    if not ok:
+        log(
+            "ComfyUI functional check FAILED -- "
+            f"{last_line or 'image could not generate an image'}",
+            indent=2,
+        )
+        dump_pod_logs(pod_id, image)
+        return "FAIL", f"ComfyUI functional check failed: {last_line[:160]}"
+    log("ComfyUI functional check passed", indent=2)
+    return None
+
+
 def _run_dwell_step(pod_id: str, image: str) -> Optional[_Outcome]:
     """Brief dwell to catch containers that boot, accept SSH, then crash.
     Most real images hit this in the first ~30s if they're going to crash.
@@ -398,6 +499,9 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
         if outcome is not None:
             return outcome
         outcome = _run_port_steps(host, port, pod_id, group, image)
+        if outcome is not None:
+            return outcome
+        outcome = _run_comfyui_steps(host, port, pod_id, group, image)
         if outcome is not None:
             return outcome
         outcome = _run_dwell_step(pod_id, image)

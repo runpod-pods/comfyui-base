@@ -157,6 +157,10 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
       * GROUP_MIN_CUDA   — fallback CUDA for tag-less images (NGC etc.)
       * GROUP_TEST_JUPYTER — opt-in for Jupyter-API-specific probes
       * GROUP_TEST_PORTS  — generic per-port HTTP probes (in-pod + proxy)
+      * GROUP_TEST_COMFYUI — ComfyUI reachability smoke on :8188 (in-pod +
+        proxy). Also turned on implicitly by test_comfyui_functional.
+      * GROUP_TEST_COMFYUI_FUNCTIONAL — ComfyUI end-to-end functional check
+        (download model -> run workflow -> validate output PNG, in-pod)
       * GROUP_CHECK_ALL_GPU — disable PASS short-circuit, test on every
         resolved instance (paired with `_select_all_gpus` in instances.py)
     """
@@ -186,6 +190,27 @@ def _apply_manifest_overrides(manifest: dict[str, dict]) -> None:
             log(
                 f"group '{grp}': test_ports={ports} "
                 "(expose each as <port>/http, probe in-pod + via proxy)"
+            )
+    for grp, contents in manifest.items():
+        reach = _normalize_bool(contents.get("test_comfyui"))
+        func = _normalize_bool(contents.get("test_comfyui_functional"))
+        if func:
+            config.GROUP_TEST_COMFYUI_FUNCTIONAL[grp] = True
+            log(
+                f"group '{grp}': test_comfyui_functional=true "
+                "(provision model via RunpodDirect -> POST workflow -> "
+                "poll /history -> validate PNG, host-side via public proxy)"
+            )
+        # Functional implies smoke: can't generate if ComfyUI isn't up, so
+        # the reachability probe (expose 8188/http, in-pod + proxy) runs
+        # first whenever either flag is set.
+        if reach or func:
+            config.GROUP_TEST_COMFYUI[grp] = True
+            log(
+                f"group '{grp}': test_comfyui=true "
+                f"(reachability of :{config.COMFYUI_PORT}, in-pod + proxy"
+                + ("; implied by test_comfyui_functional" if func and not reach else "")
+                + ")"
             )
     for grp, contents in manifest.items():
         if _normalize_bool(contents.get("check_all_gpu")):

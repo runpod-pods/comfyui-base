@@ -8,6 +8,16 @@ on:
         type: boolean
         required: true
         default: true
+      run_functional_tests:
+        description: >-
+          Run the ComfyUI functional test (download model + generate an
+          image on a real GPU). Slower and uses GPU credits; leave off for
+          the default smoke tests only (boot + CUDA + Jupyter + port checks).
+          When on, the generated PNG(s) are uploaded as the
+          "comfyui-generated-images" run artifact.
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   dev:
@@ -20,7 +30,7 @@ jobs:
     # Artifact file contents are not subject to that scrubbing.
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 #v7.0.1
 
       - name: Clear space to remove unused folders
         run: |
@@ -113,7 +123,7 @@ jobs:
     if: needs.dev.result == 'success' && inputs.push == true
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 #v7.0.1
         with:
           fetch-depth: 0
 
@@ -137,11 +147,16 @@ jobs:
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
-          profile: base
+          profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
+          # Smoke: always verify ComfyUI is up + reachable on :8188
+          test-comfyui: true
+          # Functional (download model + generate image) is opt-in via the
+          # workflow_dispatch enabler. Implies test-comfyui (runs after it).
+          test-comfyui-functional: ${{ inputs.run_functional_tests }}
+          save-comfyui-images: ${{ inputs.run_functional_tests }}
           on-skip: "warn"
           test_ports: |
-            - 8188
             - 8080

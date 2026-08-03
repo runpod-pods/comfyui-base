@@ -16,12 +16,17 @@ on:
 permissions:
   contents: write # Required for creating GitHub releases
 
+env:
+  IMAGE_REF: runpod/comfyui
+
 jobs:
   build-and-push:
     runs-on: blacksmith-8vcpu-ubuntu-2204
+    outputs:
+      release-version: ${{ steps.vars.outputs.release-version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 #v7.0.1
 
       - name: Clear space to remove unused folders
         run: |
@@ -43,29 +48,25 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set environment variables
+        id: vars
         run: |
-          echo "IMAGE_REF=runpod/comfyui" >> $GITHUB_ENV
-
           # Determine version based on trigger type
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             # Manual trigger: use input version
             VERSION="${{ github.event.inputs.version }}"
-            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "IS_MANUAL_RELEASE=true" >> $GITHUB_ENV
           elif [[ "${{ github.event_name }}" == "release" ]]; then
             # GitHub Release published event
             VERSION="${{ github.event.release.tag_name }}"
-            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "IS_MANUAL_RELEASE=false" >> $GITHUB_ENV
           else
             # Tag trigger: use tag name (remove refs/tags/ prefix)
             VERSION=${GITHUB_REF#refs/tags/}
-            echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "IS_MANUAL_RELEASE=false" >> $GITHUB_ENV
           fi
 
-          # Export TAG for docker-bake.hcl variable override
-          echo "TAG=${RELEASE_VERSION}" >> $GITHUB_ENV
+          # RELEASE_VERSION feeds the bake steps' TAG env below.
+          echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
+
+          # Hand the release version to the separate release-comfyui job.
+          echo "release-version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push CUDA 13.0 image
         id: build-cuda13
@@ -118,9 +119,9 @@ jobs:
             --argjson cuda13 "${CUDA13_REFS}" \
             --argjson regular "${REGULAR_REFS}" \
             '$cuda13 + $regular | unique')
-          # Write to a file for the artifact handoff to test-dev. (Job
-          # outputs can't be used here — they get scrubbed because the
-          # refs contain the DOCKERHUB_USERNAME secret; see job comment.)
+          # Write to a file so the refs reach the `test` job via an artifact.
+          # A job output can't be used here: the refs embed DOCKERHUB_USERNAME,
+          # so GitHub scrubs them from the output.
           mkdir -p "${RUNNER_TEMP}/refs"
           printf '%s\n' "${REFS}" > "${RUNNER_TEMP}/refs/image-refs.json"
           echo "Combined image refs:"
@@ -139,7 +140,7 @@ jobs:
     needs: build-and-push
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 #v7.0.1
         with:
           fetch-depth: 0
 
@@ -163,39 +164,54 @@ jobs:
         uses: ./.github/actions/smoke-test
         with:
           image-refs: ${{ steps.refs.outputs.refs }}
-          profile: base
+          # ComfyUI ships only GPU images; the `latest` tag carries no CUDA
+          # marker, so `base` would sort it into base_cpu and try to generate
+          # on a CPU pod. `gpu` puts every ref into a single base_gpu group.
+          profile: gpu
           runpod-api-key: ${{ secrets.TESTING_RUNPOD_API_KEY }}
           ssh-private-key: ${{ secrets.TESTING_RUNPOD_SSH_PRIVATE_KEY }}
           test-jupyter: true
+          # Smoke: always verify ComfyUI is up + reachable on :8188
+          test-comfyui: true
+          # On a release the image MUST be able to generate, so the functional
+          # check is always on (release.yml has no run_functional_tests toggle).
+          test-comfyui-functional: "true"
+          save-comfyui-images: "true"
           on-skip: "warn"
           test_ports: |
-            - 8188
             - 8080
 
   release-comfyui:
     runs-on: blacksmith-2vcpu-ubuntu-2204
-    needs: build-and-push
+    # Gate the GitHub Release on the smoke + functional test passing — we don't
+    # want to publish a release for an image that can't generate. (Note: the
+    # Docker stable tags are still pushed by build-and-push before this runs;
+    # fully gating the image push needs the build/test/promote split tracked
+    # separately, to be reconciled with #17's release.yml rewrite.)
+    needs: [build-and-push, test]
     steps:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         if: github.event_name != 'release'
         with:
-          tag_name: ${{ env.RELEASE_VERSION }}
-          name: ${{ env.RELEASE_VERSION }}
+          tag_name: ${{ needs.build-and-push.outputs.release-version }}
+          name: ${{ needs.build-and-push.outputs.release-version }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Release Summary
+        env:
+          RELEASE_VERSION: ${{ needs.build-and-push.outputs.release-version }}
         run: |
           echo "🚀 Release completed!"
-          echo "Version: ${{ env.RELEASE_VERSION }}"
+          echo "Version: ${RELEASE_VERSION}"
           echo "Docker Images:"
-          echo " - ${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}-cuda12.8 (CUDA 12.8)"
-          echo " - ${{ env.IMAGE_REF }}:cuda12.8"
-          echo " - ${{ env.IMAGE_REF }}:latest"
-          echo " - ${{ env.IMAGE_REF }}:${{ env.RELEASE_VERSION }}-cuda13.0 (CUDA 13.0)"
-          echo " - ${{ env.IMAGE_REF }}:cuda13.0"
+          echo " - ${IMAGE_REF}:${RELEASE_VERSION}-cuda12.8 (CUDA 12.8)"
+          echo " - ${IMAGE_REF}:cuda12.8"
+          echo " - ${IMAGE_REF}:latest"
+          echo " - ${IMAGE_REF}:${RELEASE_VERSION}-cuda13.0 (CUDA 13.0)"
+          echo " - ${IMAGE_REF}:cuda13.0"
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "Trigger: Manual workflow dispatch"
           else

@@ -13,6 +13,11 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+# Directory holding this package (runpod_smoke/) and its parent (tests/) —
+# used to locate the ComfyUI asset files that ship alongside the test code.
+_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+_TESTS_DIR = os.path.dirname(_PKG_DIR)
+
 
 # ---------------------------------------------------------------------------
 # Pod / scheduling
@@ -188,6 +193,64 @@ PORT_PROXY_TIMEOUT = int(os.environ.get("PORT_PROXY_TIMEOUT", "300"))
 
 
 # ---------------------------------------------------------------------------
+# ComfyUI functional check (test_comfyui_functional manifest field)
+# ---------------------------------------------------------------------------
+#
+# Where `test_ports` only proves "a server answers on :8188", the ComfyUI
+# functional check proves the image can actually GENERATE an image:
+#   provision model -> POST workflow to /prompt -> poll /history -> validate
+#   the resulting PNG. It runs entirely HOST-SIDE against the public proxy URL
+#   (https://<pod-id>-8188.proxy.runpod.net) — no SSH, no in-pod script. Model
+#   provisioning uses the ComfyUI-RunpodDirect node's /server_download/* HTTP
+#   routes (baked into the image), so it needs the port exposed as 8188/http,
+#   which the `test_comfyui` reachability smoke already sets up.
+
+# ComfyUI's HTTP API port inside the pod (also the proxy port used to build
+# the public URL). start.sh launches it with `--listen 0.0.0.0 --port 8188`.
+COMFYUI_PORT = int(os.environ.get("COMFYUI_PORT", "8188"))
+
+# Asset files describing WHAT to run. Both ship in tests/comfyui/ and are
+# overridable via env for local experimentation:
+#   - the workflow (ComfyUI API format) POSTed to /prompt
+#   - the models manifest: which checkpoint(s) to fetch before running
+COMFYUI_WORKFLOW = os.environ.get(
+    "COMFYUI_WORKFLOW",
+    os.path.join(_TESTS_DIR, "comfyui", "workflows", "gsl_starter_1_1.api.json"),
+)
+COMFYUI_MODELS_MANIFEST = os.environ.get(
+    "COMFYUI_MODELS_MANIFEST",
+    os.path.join(_TESTS_DIR, "comfyui", "models.json"),
+)
+
+# Seconds to wait for ComfyUI's HTTP API (/system_stats) to answer through
+# the public proxy. On a fresh container disk the image copies ~8 GB of baked
+# ComfyUI into /workspace and imports torch before binding :8188, and the
+# proxy itself is eventually-consistent (~10-30s lag), so the default is
+# generous; ComfyUI-Manager's first-boot registry fetch can also delay the
+# first successful HTTP response.
+COMFYUI_WAIT_TIMEOUT = int(os.environ.get("COMFYUI_WAIT_TIMEOUT", "600"))
+
+# Seconds allowed for provisioning the model(s) via RunpodDirect. DreamShaper
+# 8 pruned is ~2.1 GB; over a fast datacenter link its 8-connection download
+# lands in ~1 min, but a cold HuggingFace cache / throttling can be slower.
+COMFYUI_DOWNLOAD_TIMEOUT = int(os.environ.get("COMFYUI_DOWNLOAD_TIMEOUT", "900"))
+
+# Seconds allowed for the generation itself (queue -> image on disk). A
+# 512x512 / 20-step SD1.5 run is seconds on any real GPU; the default
+# leaves room for the cold first run (checkpoint load into VRAM).
+COMFYUI_GEN_TIMEOUT = int(os.environ.get("COMFYUI_GEN_TIMEOUT", "300"))
+
+# Local directory to save the generated PNG(s) into. Empty (default) = don't
+# fetch the image back — the check still validates it over /view, we just
+# don't keep a copy (keeps CI stdout light). Set to a path to pull the image
+# back (a plain HTTP GET of /view now, no base64/SSH) and eyeball it, e.g.:
+#   COMFYUI_SAVE_DIR=./comfy-out ./tests/test_images.py <manifest> <group>
+# The pod is terminated right after the check, so this is the only way to
+# see the actual output after a run finishes.
+COMFYUI_SAVE_DIR = os.environ.get("COMFYUI_SAVE_DIR", "")
+
+
+# ---------------------------------------------------------------------------
 # CPU groups + candidates
 # ---------------------------------------------------------------------------
 
@@ -354,6 +417,31 @@ GROUP_TEST_JUPYTER: dict[str, bool] = {}
 # port checks just verify "a server responds with HTTP <500", which is
 # what we want for arbitrary apps like ComfyUI / FileBrowser.
 GROUP_TEST_PORTS: dict[str, list[int]] = {}
+
+# Per-group ComfyUI SMOKE-check opt-in, populated in main() from the
+# `test_comfyui:` manifest field. This is the ComfyUI-branded reachability
+# check: expose COMFYUI_PORT (8188) as <port>/http, then probe it twice —
+# in-pod over SSH (server bound to localhost) and via the public Runpod
+# proxy (end-to-end reachability). It answers "is ComfyUI up and reachable
+# from a browser?", NOT "can it generate an image".
+#
+# It's a convenience alias for `test_ports: [8188]` with ComfyUI-labelled
+# log lines — set `test_comfyui: true` instead of hand-writing the port.
+# `test_ports` still exists for any OTHER port (e.g. 8080 FileBrowser).
+GROUP_TEST_COMFYUI: dict[str, bool] = {}
+
+# Per-group ComfyUI FUNCTIONAL-check opt-in, populated in main() from the
+# `test_comfyui_functional:` manifest field. When True, `runner.test_pair`
+# runs the end-to-end ComfyUI probe entirely host-side via the public proxy
+# (no SSH): download model -> POST workflow -> poll /history -> validate the
+# output PNG.
+#
+# The functional check IMPLIES the smoke check: you can't generate an image
+# if ComfyUI isn't reachable, so enabling `test_comfyui_functional` also
+# turns on `test_comfyui` (see test_images._apply_manifest_overrides). The
+# reachability probe runs first; only if it passes do we spend GPU time on
+# the generation.
+GROUP_TEST_COMFYUI_FUNCTIONAL: dict[str, bool] = {}
 
 # Per-group "test on every resolved instance" opt-in, populated in main()
 # from the `check_all_gpu:` manifest field. When True:

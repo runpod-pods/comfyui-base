@@ -55,6 +55,50 @@ inputs:
       its own entrypoint and would fail the probe.
     required: false
     default: "false"
+  test-comfyui:
+    description: |
+      'true' to add `test_comfyui: true` to every group: the ComfyUI
+      reachability SMOKE check. Exposes :8188 as 8188/http and probes it
+      both in-pod (curl 127.0.0.1:8188) and via the public Runpod proxy.
+      Answers "is ComfyUI up and reachable from a browser?" — NOT whether
+      it can generate. Cheap; safe to leave on for ComfyUI images.
+    required: false
+    default: "false"
+  test-comfyui-functional:
+    description: |
+      'true' to add `test_comfyui_functional: true` to every group: the
+      ComfyUI end-to-end FUNCTIONAL check. After the pod boots, test_images.py
+      talks to ComfyUI over the public proxy URL (no SSH): provisions the
+      model(s) from tests/comfyui/models.json via the baked-in
+      ComfyUI-RunpodDirect node's /server_download/* routes, POSTs
+      tests/comfyui/workflows/*.api.json to /prompt, polls /history, and
+      asserts a real PNG came out. Heavier (pulls a ~2 GB model + uses GPU
+      time). Implies `test-comfyui` (reachability runs first). Off by
+      default — gate it behind an enabler.
+    required: false
+    default: "false"
+  save-comfyui-images:
+    description: |
+      'true' to keep the PNG(s) the ComfyUI functional check generates and
+      upload them as a workflow ARTIFACT (nothing is committed to the repo —
+      you download them from the run's Summary page). Sets COMFYUI_SAVE_DIR
+      for test_images.py, then uploads that dir after the run (even if the
+      run failed, so you can inspect a bad image). No-op unless
+      `test-comfyui-functional` actually produced an image. Off by default.
+    required: false
+    default: "false"
+  comfyui-images-artifact-name:
+    description: |
+      Name of the uploaded images artifact (only used when
+      `save-comfyui-images` is 'true'). Give each call a distinct name if the
+      same workflow run invokes this action more than once — upload-artifact
+      rejects duplicate artifact names within a run.
+    required: false
+    default: "comfyui-generated-images"
+  comfyui-images-retention-days:
+    description: "Retention (days) for the uploaded images artifact."
+    required: false
+    default: "14"
   check_all_gpu:
     description: |
       'true' to emit `check_all_gpu: true` for GPU groups. The smoke
@@ -258,6 +302,8 @@ runs:
         MIN_VRAM_GB: ${{ inputs.min-vram-gb }}
         MANUFACTURER: ${{ inputs.manufacturer }}
         TEST_JUPYTER: ${{ inputs.test-jupyter }}
+        TEST_COMFYUI: ${{ inputs.test-comfyui }}
+        TEST_COMFYUI_FUNCTIONAL: ${{ inputs.test-comfyui-functional }}
         CHECK_ALL_GPU: ${{ inputs.check_all_gpu }}
         TEST_PORTS: ${{ inputs.test_ports }}
         EXCLUDE_INSTANCES: ${{ inputs.exclude-instances }}
@@ -270,6 +316,12 @@ runs:
         EXTRA_ARGS=()
         if [[ "${TEST_JUPYTER,,}" == "true" ]]; then
           EXTRA_ARGS+=(--test-jupyter)
+        fi
+        if [[ "${TEST_COMFYUI,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-comfyui)
+        fi
+        if [[ "${TEST_COMFYUI_FUNCTIONAL,,}" == "true" ]]; then
+          EXTRA_ARGS+=(--test-comfyui-functional)
         fi
         if [[ "${CHECK_ALL_GPU,,}" == "true" ]]; then
           EXTRA_ARGS+=(--check-all-gpu)
@@ -325,6 +377,29 @@ runs:
         # Forwarded to config.CREATE_TIMEOUT — bumps the SSH-readiness
         # deadline for slow pulls (mainly multi-GB ROCm base images).
         CREATE_TIMEOUT: ${{ inputs.create-timeout }}
+        SAVE_COMFYUI_IMAGES: ${{ inputs.save-comfyui-images }}
       run: |
         set -uo pipefail
+        # When asked to keep the generated PNGs, point the ComfyUI functional
+        # check at a save dir under RUNNER_TEMP (fetched over /view as a plain
+        # HTTP GET). The next step uploads it as an artifact. Left unset =
+        # validate-only, no copy kept (config.COMFYUI_SAVE_DIR default).
+        if [[ "${SAVE_COMFYUI_IMAGES,,}" == "true" ]]; then
+          export COMFYUI_SAVE_DIR="${RUNNER_TEMP}/comfy-out"
+          mkdir -p "${COMFYUI_SAVE_DIR}"
+        fi
         python3 "${GITHUB_WORKSPACE}/tests/test_images.py" "${MANIFEST_PATH}"
+
+    - name: Upload generated ComfyUI images
+      # always() so a FAILED functional run still surfaces whatever image it
+      # did manage to produce (helps debug a bad/garbled generation). Skipped
+      # entirely when image-keeping wasn't requested. if-no-files-found:ignore
+      # keeps the step green when the functional check didn't run / produced
+      # nothing (e.g. functional off, or it failed before /view).
+      if: ${{ always() && inputs.save-comfyui-images == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.comfyui-images-artifact-name }}
+        path: ${{ runner.temp }}/comfy-out
+        retention-days: ${{ inputs.comfyui-images-retention-days }}
+        if-no-files-found: ignore

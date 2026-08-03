@@ -1,3 +1,5 @@
 __pycache__/
 *.py[cod]
 tests/runpod_smoke/__pycache__/
+
+comfy-out/

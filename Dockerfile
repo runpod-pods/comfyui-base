@@ -39,10 +39,10 @@ RUN apt-get update && \
     && rm cuda-keyring_1.1-1_all.deb \
     && rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED
 
-# Install pip and pip-tools for lock file generation
+# Install pip and pip-tools for lock file generation.
 RUN curl -sS https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
-    python3.12 get-pip.py && \
-    python3.12 -m pip install --no-cache-dir pip-tools && \
+    python3.12 get-pip.py "pip==26.1.2" && \
+    python3.12 -m pip install --no-cache-dir "pip-tools==7.6.0" && \
     rm get-pip.py
 
 # Set CUDA environment for building
