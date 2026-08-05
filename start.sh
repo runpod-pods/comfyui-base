@@ -2,11 +2,14 @@
 set -e  # Exit the script if any statement returns a non-true return value
 
 COMFYUI_DIR="/workspace/runpod-slim/ComfyUI"
+BAKED_COMFYUI_DIR="/opt/comfyui-baked"
+BUNDLE_VERSION_FILE=".runpod-bundle-version"
 VENV_DIR="$COMFYUI_DIR/.venv-cu128"
 OLD_VENV_DIR="$COMFYUI_DIR/.venv"
 FILEBROWSER_CONFIG="/root/.config/filebrowser/config.json"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
 PIP_CONSTRAINT_FILE="/opt/comfyui-runtime-constraints.txt"
+BAKED_NODES=("ComfyUI-Manager" "ComfyUI-KJNodes" "Civicomfy" "ComfyUI-RunpodDirect")
 
 # ---------------------------------------------------------------------------- #
 #                          Function Definitions                                  #
@@ -103,6 +106,71 @@ start_jupyter() {
     echo "Jupyter Lab started"
 }
 
+# Upgrade the image-managed ComfyUI files while leaving user data on the
+# persistent workspace untouched.
+upgrade_comfyui_if_needed() {
+    local baked_manifest="$BAKED_COMFYUI_DIR/$BUNDLE_VERSION_FILE"
+    local installed_manifest="$COMFYUI_DIR/$BUNDLE_VERSION_FILE"
+
+    # A missing workspace is handled by the first-time setup below.
+    if [ ! -d "$COMFYUI_DIR" ]; then
+        return
+    fi
+
+    if [ ! -f "$baked_manifest" ]; then
+        echo "WARNING: Baked ComfyUI bundle manifest is missing; skipping upgrade"
+        return
+    fi
+
+    if [ -f "$installed_manifest" ] && cmp -s "$baked_manifest" "$installed_manifest"; then
+        echo "Using existing ComfyUI installation (bundle is current)"
+        return
+    fi
+
+    echo "============================================="
+    echo "  Upgrading ComfyUI workspace from baked bundle"
+    echo "  Preserving models, user data, and custom nodes"
+    echo "============================================="
+
+    # Sync ComfyUI core and remove files that no longer exist in the new
+    # release. Excluded paths belong to the user or are managed separately.
+    rsync -a --delete \
+        --exclude="/$BUNDLE_VERSION_FILE" \
+        --exclude="/.venv*" \
+        --exclude="/models" \
+        --exclude="/input" \
+        --exclude="/output" \
+        --exclude="/user" \
+        --exclude="/custom_nodes" \
+        --exclude="/extra_model_paths.yaml" \
+        "$BAKED_COMFYUI_DIR/" "$COMFYUI_DIR/"
+
+    mkdir -p "$COMFYUI_DIR/custom_nodes"
+
+    # Update files located directly under custom_nodes without deleting
+    # user-provided files or directories.
+    rsync -a --exclude="*/" \
+        "$BAKED_COMFYUI_DIR/custom_nodes/" "$COMFYUI_DIR/custom_nodes/"
+
+    # Image-managed nodes are pinned with the image and must be upgraded.
+    # Other custom-node directories are user-owned and remain untouched.
+    local node
+    for node in "${BAKED_NODES[@]}"; do
+        if [ -d "$BAKED_COMFYUI_DIR/custom_nodes/$node" ]; then
+            mkdir -p "$COMFYUI_DIR/custom_nodes/$node"
+            rsync -a --delete \
+                "$BAKED_COMFYUI_DIR/custom_nodes/$node/" \
+                "$COMFYUI_DIR/custom_nodes/$node/"
+        fi
+    done
+
+    # Write the manifest only after every sync succeeds. An interrupted
+    # migration is retried on the next container start.
+    cp "$baked_manifest" "${installed_manifest}.tmp"
+    mv "${installed_manifest}.tmp" "$installed_manifest"
+    echo "ComfyUI workspace upgraded successfully"
+}
+
 # ---------------------------------------------------------------------------- #
 #                               Main Program                                     #
 # ---------------------------------------------------------------------------- #
@@ -141,6 +209,8 @@ if [ ! -f "$ARGS_FILE" ]; then
     echo "# Add your custom ComfyUI arguments here (one per line)" > "$ARGS_FILE"
     echo "Created empty ComfyUI arguments file at $ARGS_FILE"
 fi
+
+upgrade_comfyui_if_needed
 
 # Migrate old CUDA 12.4 venv to cu128
 if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then

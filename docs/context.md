@@ -115,7 +115,7 @@ Recognized at runtime by the start scripts:
 - A lock file with SHA256 hashes is generated inside the builder stage using `pip-compile --generate-hashes`.
 - PyTorch wheel index is controlled by `TORCH_INDEX_SUFFIX` build arg (`cu128` for regular, `cu130` for 5090).
 - The runtime image writes `/opt/comfyui-runtime-constraints.txt` from the same PyTorch pins and `start.sh` exports it as `PIP_CONSTRAINT`, so legacy venv migration and ComfyUI-Manager dependency installs cannot silently replace the CUDA-matched torch stack.
-- At runtime, baked ComfyUI is copied from `/opt/comfyui-baked` to `/workspace/runpod-slim/ComfyUI/` on first boot.
+- At runtime, baked ComfyUI is copied from `/opt/comfyui-baked` to `/workspace/runpod-slim/ComfyUI/` on first boot. On later boots, a bundle manifest detects image upgrades and refreshes ComfyUI core plus the four image-managed custom nodes. Models, inputs, outputs, user settings, virtual environments, and user-installed custom nodes are preserved.
 
 Preinstalled custom nodes:
 
