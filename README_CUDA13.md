@@ -4,7 +4,7 @@ Run the latest ComfyUI with CUDA 13. All dependencies are pre-installed in the i
 
 ## Upgrading from a previous version
 
-If you have an existing pod created with an older version of this template (CUDA 12.4), a one-time migration of the virtual environment will be performed automatically on the next boot to make it compatible with CUDA 13. This may take a few extra minutes on first start after the update.
+If you have an existing pod created with an older version of this template (CUDA 12.4), a one-time migration is performed automatically on the next boot. ComfyUI and the bundled custom nodes are updated to the versions pinned by the image, while models, inputs, outputs, user settings, and user-installed custom nodes are preserved. The virtual environment is also migrated to CUDA 13 compatibility. This may take a few extra minutes on the first start after the update.
 
 ## Access
 
