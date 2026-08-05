@@ -116,7 +116,14 @@ COPY scripts/prebake-manager-cache.py /tmp/prebake-manager-cache.py
 RUN python3.12 /tmp/prebake-manager-cache.py /tmp/build/ComfyUI/user/__manager/cache
 
 # Bake ComfyUI + custom nodes into a known location for runtime copy
-RUN cp -r /tmp/build/ComfyUI /opt/comfyui-baked
+RUN printf '%s\n' \
+    "COMFYUI_VERSION=${COMFYUI_VERSION}" \
+    "MANAGER_SHA=${MANAGER_SHA}" \
+    "KJNODES_SHA=${KJNODES_SHA}" \
+    "CIVICOMFY_SHA=${CIVICOMFY_SHA}" \
+    "RUNPODDIRECT_SHA=${RUNPODDIRECT_SHA}" \
+    > /tmp/build/ComfyUI/.runpod-bundle-version && \
+    cp -r /tmp/build/ComfyUI /opt/comfyui-baked
 
 # ============================================================================
 # Stage 2: Runtime - Clean image with pre-installed packages
@@ -169,6 +176,7 @@ RUN apt-get update && \
     procps \
     openssl \
     ffmpeg \
+    rsync \
     && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
     && dpkg -i cuda-keyring_1.1-1_all.deb \
     && apt-get update \
