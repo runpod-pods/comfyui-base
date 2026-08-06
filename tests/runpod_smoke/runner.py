@@ -32,7 +32,7 @@ from .checks import (
 )
 from .comfyui import run_comfyui_check
 from .instances import detect_cuda_version, resolve_gpu_id
-from .log import log
+from .log import log, set_worker_context
 from .pod import (
     TRANSIENT_RE,
     UNAVAILABLE_RE,
@@ -595,7 +595,13 @@ def test_image(
     last_create_error = ""
     last_create_inst = ""
     for inst in instances:
-        result, detail = test_pair(image, inst, group)
+        # Tag every line from this attempt with the instance name
+        # ([W1-A40]) so interleaved parallel logs stay attributable.
+        set_worker_context(inst)
+        try:
+            result, detail = test_pair(image, inst, group)
+        finally:
+            set_worker_context(None)
         if result == "PASS":
             return "PASS", "", inst
         if result == "FAIL":
