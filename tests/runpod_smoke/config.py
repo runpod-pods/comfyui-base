@@ -203,8 +203,9 @@ PORT_WAIT_TIMEOUT = int(os.environ.get("PORT_WAIT_TIMEOUT", "300"))
 # so the Jupyter-specific knob can stay tighter (Jupyter responds fast
 # once bound) without making us impatient with slower-to-boot apps.
 # Same override pattern as PORT_WAIT_TIMEOUT — bump together for slow
-# apps (proxy probe runs AFTER in-pod probe confirms the server is up,
-# but Runpod's proxy is eventually-consistent and can lag by ~10-30s).
+# apps. The proxy probe now runs FIRST (end-user path), so this window
+# must absorb the app's full cold start PLUS the proxy's own
+# eventually-consistent registration lag (~10-30s).
 PORT_PROXY_TIMEOUT = int(os.environ.get("PORT_PROXY_TIMEOUT", "300"))
 
 
