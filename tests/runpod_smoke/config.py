@@ -121,12 +121,11 @@ def auto_terminate_deadline() -> str:
 # SSH
 # ---------------------------------------------------------------------------
 
-# Container logs aren't exposed via runpodctl 2.3.0's JSON, so we SSH
-# directly to the pod's exposed port 22 (mapped to a random high port on
-# a public IP by Runpod) to grab them. The endpoint is discovered from
-# `pod get`'s ssh.ip / ssh.port fields once the pod is scheduled.
+# SSH is used for the readiness probe, the in-pod functional checks, and
+# a GPU SMI snapshot in the diagnostic dump. The endpoint is discovered
+# from `pod get`'s ssh.ip / ssh.port fields once the pod is scheduled.
 #   Override SSH_IDENTITY if your key lives in a non-standard location.
-#   Set SSH_LOG_FETCH=0 to skip SSH-based log fetching entirely.
+#   Set SSH_LOG_FETCH=0 to skip the SSH-based SMI snapshot entirely.
 SSH_IDENTITY = os.environ.get("RUNPOD_SSH_KEY", "")
 SSH_LOG_FETCH = os.environ.get("SSH_LOG_FETCH", "1") == "1"
 SSH_OPTS = [
@@ -142,6 +141,23 @@ SSH_OPTS = [
     "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
     "-o", "HostKeyAlgorithms=+ssh-rsa",
 ]
+
+# ---------------------------------------------------------------------------
+# Container logs via REST API (v2)
+# ---------------------------------------------------------------------------
+
+# GET https://api.runpod.io/v2/pods/{id}/logs streams container stdout as
+# SSE — the ONE thing SSH can't see (PID-1 stdout isn't readable from
+# another process inside the pod). Primary source in dump_pod_logs and
+# the feed for the always-on log error scan.
+#   LOG_ERROR_SCAN=0        disable the error-scan step entirely
+#   LOG_ERROR_PATTERN=...   override the regex (case-insensitive)
+#   LOG_API_TAIL=N          how many historical lines to backfill (max 5000)
+LOG_ERROR_SCAN = os.environ.get("LOG_ERROR_SCAN", "1") == "1"
+# \berr(or)?s?\b: matches 'err' / 'error' / 'ERRORS' as words, but NOT
+# 'stderr' / 'error-free' substrings inside longer identifiers.
+LOG_ERROR_PATTERN = os.environ.get("LOG_ERROR_PATTERN", r"\berr(or)?s?\b")
+LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
 
 
 # ---------------------------------------------------------------------------

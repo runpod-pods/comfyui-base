@@ -24,8 +24,10 @@ from .checks import (
     run_cuda_check,
     run_jupyter_check,
     run_jupyter_proxy_check,
+    run_pip_check,
     run_port_check,
     run_port_proxy_check,
+    scan_pod_logs_for_errors,
     ssh_probe,
 )
 from .comfyui import run_comfyui_check
@@ -197,6 +199,33 @@ def _run_cuda_step(
         dump_pod_logs(pod_id, image)
         return "FAIL", "CUDA/GPU functional check failed"
     log("cuda check passed", indent=2)
+    return None
+
+
+def _run_pip_step(
+    host: str, port: int, pod_id: str, image: str,
+) -> Optional[_Outcome]:
+    """Always-on pip probe — no manifest enabler.
+
+    Runs `python -m pip --version` (preferring the ComfyUI venv when
+    present) and records wall time. Fails if pip is missing or slower
+    than ComfyUI-Manager's 5s get_pip_cmd timeout — the intermittent
+    error seen on slow network volumes."""
+    if not (host and port):
+        return None
+    log("running pip check (always on)...", indent=2)
+    ok, output = run_pip_check(host, port)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    if not ok:
+        log(
+            "pip check FAILED -- python -m pip missing or slower than "
+            "ComfyUI-Manager's 5s timeout",
+            indent=2,
+        )
+        dump_pod_logs(pod_id, image)
+        return "FAIL", "pip check failed"
+    log("pip check passed", indent=2)
     return None
 
 
@@ -412,6 +441,29 @@ def _run_comfyui_steps(
     return None
 
 
+def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:
+    """Always-on container-log error scan via the REST log API (no SSH).
+
+    Greps the container stdout backfill for error markers
+    (LOG_ERROR_PATTERN, default \\berr(or)?s?\\b case-insensitive) —
+    catches failures that never surface as a dead port or crashed pod,
+    e.g. ComfyUI-Manager's 'Neither pip nor uv are available'. Skipped
+    (not failed) when the API key is missing. Disable with
+    LOG_ERROR_SCAN=0."""
+    if not config.LOG_ERROR_SCAN:
+        return None
+    log("scanning container logs for error markers (via API)...", indent=2)
+    ok, report = scan_pod_logs_for_errors(pod_id)
+    for line in report.splitlines():
+        log(f"  {line}", indent=2)
+    if not ok:
+        log("log scan FAILED -- error markers found in container logs", indent=2)
+        dump_pod_logs(pod_id, image)
+        return "FAIL", "error markers found in container logs"
+    log("log scan passed", indent=2)
+    return None
+
+
 def _run_dwell_step(pod_id: str, image: str) -> Optional[_Outcome]:
     """Brief dwell to catch containers that boot, accept SSH, then crash.
     Most real images hit this in the first ~30s if they're going to crash.
@@ -495,6 +547,9 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
         outcome = _run_cuda_step(host, port, image, group, pod_id)
         if outcome is not None:
             return outcome
+        outcome = _run_pip_step(host, port, pod_id, image)
+        if outcome is not None:
+            return outcome
         outcome = _run_jupyter_steps(host, port, pod_id, group, image)
         if outcome is not None:
             return outcome
@@ -502,6 +557,9 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
         if outcome is not None:
             return outcome
         outcome = _run_comfyui_steps(host, port, pod_id, group, image)
+        if outcome is not None:
+            return outcome
+        outcome = _run_log_scan_step(pod_id, image)
         if outcome is not None:
             return outcome
         outcome = _run_dwell_step(pod_id, image)

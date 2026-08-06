@@ -62,18 +62,6 @@ TRANSIENT_RE = re.compile(
     re.IGNORECASE,
 )
 
-RUNTIME_ERROR_RE = re.compile(
-    r"toomanyrequests"
-    r"|rate\s+limit"
-    r"|failed\s+to\s+pull\s+image"
-    r"|error\s+creating\s+container"
-    r"|manifest\s+(?:unknown|not\s+found)"
-    r"|access\s+denied"
-    r"|no\s+such\s+image",
-    re.IGNORECASE,
-)
-
-
 # ---------------------------------------------------------------------------
 # Active-pod tracking + signal-safe cleanup
 # ---------------------------------------------------------------------------
@@ -329,78 +317,6 @@ def pod_state(pod_id: str) -> dict:
         "last_status_change": data.get("lastStatusChange"),
         "raw": data,
     }
-
-
-def pod_status(pod_id: str) -> Optional[str]:
-    """Returns `desiredStatus` — note this is always RUNNING after creation
-    so it can ONLY be used to detect terminal states (EXITED/FAILED/DEAD)."""
-    return pod_state(pod_id).get("desired")
-
-
-# Top-level fields on `pod get` that may carry a runtime error message
-# directly. Checked verbatim with `isinstance(value, str)`.
-_DIRECT_ERROR_FIELDS = ("lastError", "errorMessage", "statusMessage",
-                        "lastStatusChange")
-
-# Same as above but expected on the nested `runtime` dict that Runpod
-# returns alongside top-level fields.
-_RUNTIME_ERROR_FIELDS = ("lastError", "errorMessage", "statusMessage")
-
-# Fields whose value is a list of event objects (or strings); each item's
-# `message` is harvested. `events` is the standard one; the other two
-# show up on older `pod get` responses.
-_EVENT_LIST_FIELDS = ("events", "statusEvents", "containerEvents")
-
-# Fields whose value is a single block of log lines that may contain
-# pull-time errors not surfaced anywhere else.
-_LOG_BLOCK_FIELDS = ("containerLogs", "logs")
-
-
-def _collect_string_field(target: list[str], src: dict, key: str) -> None:
-    val = src.get(key)
-    if isinstance(val, str) and val:
-        target.append(val)
-
-
-def _collect_event_messages(target: list[str], events: object) -> None:
-    if not isinstance(events, list):
-        return
-    for ev in events:
-        msg = ev.get("message") if isinstance(ev, dict) else str(ev)
-        if isinstance(msg, str) and msg:
-            target.append(msg)
-
-
-def _gather_runtime_error_candidates(data: dict) -> list[str]:
-    """Walk every plausible place Runpod stuffs a runtime/pull error,
-    return a flat list of candidate lines. Doesn't filter — that's
-    `pod_runtime_error`'s job."""
-    runtime = data.get("runtime") or {}
-    candidates: list[str] = []
-    for key in _DIRECT_ERROR_FIELDS:
-        _collect_string_field(candidates, data, key)
-    for key in _RUNTIME_ERROR_FIELDS:
-        _collect_string_field(candidates, runtime, key)
-    for key in _EVENT_LIST_FIELDS:
-        _collect_event_messages(candidates, data.get(key) or runtime.get(key))
-    for key in _LOG_BLOCK_FIELDS:
-        val = data.get(key) or runtime.get(key)
-        if isinstance(val, str):
-            candidates.extend(val.splitlines())
-    return candidates
-
-
-def pod_runtime_error(pod_id: str) -> Optional[str]:
-    """Inspect pod-get response for container-runtime errors (pull failures,
-    bad images, etc.) that appear *before* the pod ever reaches RUNNING.
-    Returns a short error string or None."""
-    data = runpodctl_json("pod", "get", pod_id, timeout=30)
-    if not isinstance(data, dict):
-        return None
-    for line in _gather_runtime_error_candidates(data):
-        if RUNTIME_ERROR_RE.search(line):
-            return line.strip()[:300]
-    return None
 
 
 # ---------------------------------------------------------------------------
