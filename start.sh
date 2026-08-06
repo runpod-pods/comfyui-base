@@ -276,8 +276,10 @@ else
     echo "Using existing ComfyUI installation"
 fi
 
-# Warm up pip so ComfyUI-Manager's 5s timeout check doesn't fail on cold start
-python -m pip --version > /dev/null 2>&1
+# Warm up pip so ComfyUI-Manager's 5s timeout check doesn't fail on cold start.
+# Log wall time — Manager fails if `python -m pip --version` takes >5s.
+echo "Warming up pip (Manager timeout is 5s)..."
+time python -m pip --version
 
 # Start ComfyUI — keep container alive if it crashes so SSH/Jupyter remain accessible
 cd $COMFYUI_DIR
