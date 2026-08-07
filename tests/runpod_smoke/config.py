@@ -262,6 +262,13 @@ COMFYUI_MODELS_MANIFEST = os.environ.get(
 # first successful HTTP response.
 COMFYUI_WAIT_TIMEOUT = int(os.environ.get("COMFYUI_WAIT_TIMEOUT", "600"))
 
+# Seconds the RunpodDirect feature-detect (`/server_download/folder_paths`)
+# keeps retrying before declaring the routes unavailable. Retrying matters:
+# the Runpod proxy's replicas are eventually-consistent, and a single-shot
+# probe used to misclassify a transient proxy 404/5xx as "node not
+# installed in this image" — an intermittent CI FAIL.
+COMFYUI_ROUTES_TIMEOUT = int(os.environ.get("COMFYUI_ROUTES_TIMEOUT", "60"))
+
 # Seconds allowed for provisioning the model(s) via RunpodDirect. DreamShaper
 # 8 pruned is ~2.1 GB; over a fast datacenter link its 8-connection download
 # lands in ~1 min, but a cold HuggingFace cache / throttling can be slower.

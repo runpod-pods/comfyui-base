@@ -385,6 +385,7 @@ pytorch:
 | `COMFYUI_WORKFLOW` | `tests/comfyui/workflows/gsl_starter_1_1.api.json` | Path to the ComfyUI **API-format** workflow POSTed to `/prompt`. Override to test a different template. |
 | `COMFYUI_MODELS_MANIFEST` | `tests/comfyui/models.json` | Path to the JSON list of models to provision before running (`filename`, `directory` = a ComfyUI `folder_paths` key, `url`, `sha256`). |
 | `COMFYUI_WAIT_TIMEOUT` | `600` | Seconds the `test_comfyui_functional` probe waits for `/system_stats` to answer **through the proxy** (cold ComfyUI cp -r + torch import + Manager fetch + eventually-consistent proxy). |
+| `COMFYUI_ROUTES_TIMEOUT` | `60` | Seconds the RunpodDirect feature-detect (`GET /server_download/folder_paths`) keeps retrying before declaring the routes unavailable. Absorbs transient proxy 404/5xx from eventually-consistent proxy replicas. |
 | `COMFYUI_DOWNLOAD_TIMEOUT` | `900` | Seconds allowed for RunpodDirect to provision the model(s). DreamShaper 8 pruned is ~2.1 GB. |
 | `COMFYUI_GEN_TIMEOUT` | `300` | Seconds allowed for the generation itself (queue → PNG on disk), including the cold first checkpoint load into VRAM. |
 | `COMFYUI_SAVE_DIR` | _(empty)_ | Local directory to save the generated PNG into (a plain HTTP GET of `/view`, then written as `<pod-id>_<filename>.png`). Empty = validate from the `/view` response only, don't keep a copy (keeps CI stdout light). Set it to actually **see** the image — the pod is deleted right after the check. |
@@ -558,9 +559,13 @@ failing reason surfaced):
    Otherwise `POST /server_download/start` (RunpodDirect writes into the
    right `folder_paths` dir with an 8-connection download and verifies
    size + sha256 server-side), then poll `GET /server_download/status/...`
-   until `completed`. Requires the RunpodDirect routes to exist — if
-   `GET /server_download/folder_paths` 404s (node missing from the image),
-   the check fails with a clear message rather than silently.
+   until `completed`. Requires the RunpodDirect routes to exist — the
+   feature-detect (`GET /server_download/folder_paths`) retries for up to
+   `COMFYUI_ROUTES_TIMEOUT` (default 60s) before failing, because the
+   Runpod proxy's replicas are eventually-consistent and a single-shot
+   probe used to misclassify a transient proxy 404/5xx as "node missing
+   from the image". The FAIL message includes the last HTTP code/error so
+   the two cases stay distinguishable.
 3. **Confirm visibility.** Hit `/object_info/CheckpointLoaderSimple` and
    assert the freshly-downloaded checkpoint now shows up in the node's
    enum (retries briefly to absorb the rescan lag).
