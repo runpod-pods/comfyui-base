@@ -156,8 +156,23 @@ SSH_OPTS = [
 LOG_ERROR_SCAN = os.environ.get("LOG_ERROR_SCAN", "1") == "1"
 # \berr(or)?s?\b: matches 'err' / 'error' / 'ERRORS' as words, but NOT
 # 'stderr' / 'error-free' substrings inside longer identifiers.
-LOG_ERROR_PATTERN = os.environ.get("LOG_ERROR_PATTERN", r"\berr(or)?s?\b")
+# crash(ed/es/ing) is included too: apps report post-boot failures as
+# 'worker crashed' / 'process crashing' without any 'error' nearby.
+LOG_ERROR_PATTERN = os.environ.get(
+    "LOG_ERROR_PATTERN", r"\berr(or)?s?\b|\bcrash(ed|es|ing)?\b"
+)
 LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
+
+# Error markers for the HOST-side system-log stream (`source=system`) —
+# checked when a pod won't come up (stall hint, TIMEOUT, terminal state)
+# and in the diagnostic dump. Broader than LOG_ERROR_PATTERN because
+# host/runtime failures phrase themselves as 'failed to ...' at least as
+# often as 'error ...' (e.g. `error starting container: ... failed to
+# fulfil mount request`), and 'container crashed' appears with neither.
+SYS_LOG_ERROR_PATTERN = os.environ.get(
+    "SYS_LOG_ERROR_PATTERN",
+    r"\berr(or)?s?\b|\bfail(ed|ure)?\b|\bcrash(ed|es|ing)?\b",
+)
 
 
 # ---------------------------------------------------------------------------

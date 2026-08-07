@@ -113,16 +113,16 @@ runs this sequence and reports the outcome as soon as one step fails.
 | # | Step | Failure → |
 |---|------|---|
 | 1 | `runpodctl pod create` (with `--gpu-id`, `--container-disk-in-gb`, `--ports`, registry auth, optional `--min-cuda-version`). Transient `5xx` / `Something went wrong` errors are retried silently up to `CREATE_RETRIES` with linear backoff. | `UNAVAILABLE` (no capacity for this instance type — try next) / `CREATE_FAIL` (bad image tag, registry auth, malformed request — any non-capacity, non-transient orchestrator error after retries are exhausted) |
-| 2 | Poll `runpodctl pod get` until `ssh.ip` / `ssh.port` are assigned and one-shot `ssh root@ip -p port 'echo ready'` succeeds (the real readiness signal — `desiredStatus` is always `RUNNING` after create) | `STUCK` if no SSH endpoint within `CREATE_TIMEOUT` (almost always a bad host in the scheduler pool — try another instance type) |
+| 2 | Poll `runpodctl pod get` until `ssh.ip` / `ssh.port` are assigned and one-shot `ssh root@ip -p port 'echo ready'` succeeds (the real readiness signal — `desiredStatus` is always `RUNNING` after create). In parallel, poll the REST v2 status (`GET /v2/pods/{id}`) as a fail-fast signal: unlike `desiredStatus`, it distinguishes `STARTING`/`RUNNING` and surfaces `ERROR` when the container start is aborted (e.g. a host-side mount failure at `runc` init), so we bail immediately instead of sitting out `CREATE_TIMEOUT`. On `ERROR`/stall/timeout, the host-side system logs (`GET /v2/pods/{id}/logs?source=system`) are scanned for error markers (`SYS_LOG_ERROR_PATTERN`) — that's where image-pull and container-init failures are reported; container stdout stays empty when the container never starts. | `STUCK` if no SSH endpoint within `CREATE_TIMEOUT` (almost always a bad host in the scheduler pool — try another instance type); `FAIL` if the pod hits a terminal state (`ERROR`/`EXITED`/`TERMINATED`) |
 | 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
 | 4 | **Pip check** (always on — no manifest flag) — see [Pip check](#pip-check-always-on). Prefers ComfyUI venv if present, `python -m pip --version` + wall time. Fails if pip missing or >5s | `FAIL` (pip missing / too slow on this host's network volume) |
 | 5 | **JupyterLab check** (only when `test_jupyter: true`) — see [Jupyter check](#jupyter-check-opt-in). Proxy-first: `GET https://<pod-id>-8888.proxy.runpod.net/api/status` from the test machine; on success the in-pod probe is skipped. On failure, SSH in and probe `127.0.0.1:8888` to diagnose. | `FAIL` (Jupyter not running, or up but port not exposed as `8888/http` — the in-pod diagnostic tells which) |
 | 6 | **Per-port HTTP checks** (only when `test_ports: [...]`) — see [Per-port checks](#per-port-checks-opt-in). For every listed port, proxy-first: `GET https://<pod-id>-<port>.proxy.runpod.net/`; in-pod `curl 127.0.0.1:<port>` only as a diagnostic when the proxy fails. | `FAIL` (service didn't bind / returned `5xx`, or up but port not exposed as `<port>/http`) |
 | 7 | **ComfyUI reachability smoke** (when `test_comfyui: true`, also implied by `test_comfyui_functional`) — see [ComfyUI checks](#comfyui-checks-smoke--functional). Proxy-first probe of `:8188`, in-pod probe only on proxy failure. | `FAIL` (ComfyUI didn't bind, returned `5xx`, or `:8188` wasn't exposed as `8188/http`) |
 | 8 | **ComfyUI functional check** (only when `test_comfyui_functional: true`) — see [ComfyUI checks](#comfyui-checks-smoke--functional). Host-side against the public proxy URL (no SSH): provision the model(s) via ComfyUI-RunpodDirect's `/server_download/*` routes, POST the workflow to `/prompt`, poll `/history`, fetch the output via `/view` and validate it's a real PNG. Runs only after the reachability smoke (7) passes. | `FAIL` (couldn't provision the model, ComfyUI rejected the workflow, generation errored/timed out, or no valid PNG came out) |
-| 9 | **Container-log error scan** (always on, no SSH) — see [Log error scan](#log-error-scan-always-on). Pull container stdout via the REST log API (`GET /v2/pods/{id}/logs`) and grep for `\berr(or)?s?\b` (case-insensitive, override with `LOG_ERROR_PATTERN`). Skipped when no API key. Disable with `LOG_ERROR_SCAN=0`. | `FAIL` (error markers in container logs — e.g. ComfyUI-Manager's "Neither pip nor uv are available") |
+| 9 | **Container-log error scan** (always on, no SSH) — see [Log error scan](#log-error-scan-always-on). Pull container stdout via the REST log API (`GET /v2/pods/{id}/logs`) and grep for error/crash markers (case-insensitive, override with `LOG_ERROR_PATTERN`). Skipped when no API key. Disable with `LOG_ERROR_SCAN=0`. | `FAIL` (error markers in container logs — e.g. ComfyUI-Manager's "Neither pip nor uv are available") |
 | 10 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
-| 11 | `dump_pod_logs` — full container-log backfill (`LOG_API_TAIL` lines) via the REST log API, plus a `nvidia-smi` / `rocm-smi` snapshot via SSH | _(diagnostic only)_ |
+| 11 | `dump_pod_logs` — full container-log backfill (`LOG_API_TAIL` lines) via the REST log API, system-log error markers (`source=system`, filtered by `SYS_LOG_ERROR_PATTERN`), plus a `nvidia-smi` / `rocm-smi` snapshot via SSH | _(diagnostic only)_ |
 | 12 | `runpodctl pod delete` (always — even on Ctrl-C / exception via `atexit` + signal handlers) | _(diagnostic only)_ |
 
 `test_image()` then iterates over the next instance candidate when the
@@ -366,8 +366,9 @@ pytorch:
 | `REGISTRY_AUTH_NAME` | _(empty)_ | Display name to look up via `runpodctl registry list` when `REGISTRY_AUTH_ID` is not set. Falls back to the first entry. |
 | `DWELL_SEC` | `60` | Extra seconds to wait after SSH becomes reachable, then re-probe SSH to catch containers that boot, accept SSH, then crash. Set 0 to skip the re-probe. |
 | `LOG_ERROR_SCAN` | `1` | Always-on container-log error scan via the REST log API (no SSH). Set `0` to disable. Auto-skipped when no API key is available. |
-| `LOG_ERROR_PATTERN` | `\berr(or)?s?\b` | Case-insensitive regex the log scan greps for. Matches `err`/`error`/`ERRORS` as words, not `stderr`. |
+| `LOG_ERROR_PATTERN` | `\berr(or)?s?\b\|\bcrash(ed\|es\|ing)?\b` | Case-insensitive regex the container-log scan greps for. Matches `err`/`error`/`ERRORS`/`crashed` as words, not `stderr`. |
 | `LOG_API_TAIL` | `1000` | How many historical container-log lines the REST log API backfills for the scan and the diagnostic dump. Max 5000. |
+| `SYS_LOG_ERROR_PATTERN` | `\berr(or)?s?\b\|\bfail(ed\|ure)?\b\|\bcrash(ed\|es\|ing)?\b` | Case-insensitive regex greped against the HOST-side system-log stream (`source=system`) when a pod won't come up (terminal state, stall, timeout) and in the diagnostic dump. Broader than `LOG_ERROR_PATTERN` because host/runtime failures phrase themselves as `failed to …` or `container crashed` at least as often as `error …`. |
 | `CREATE_TIMEOUT` | `600` | Max seconds to wait for SSH to become reachable. Raise for ROCm workflows (`create-timeout: "1200"` on the action) — the official `rocm/pytorch:*` base images are 30-50GB and routinely take 8-15 minutes to pull. |
 | `POLL_INTERVAL` | `10` | Poll cadence for SSH probes. |
 | `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid Runpod rate limits and surprise bills. |
@@ -433,9 +434,10 @@ the one log source SSH can't reach — ComfyUI runs as PID 1 and its
 stdout isn't readable from a separate SSH session.
 
 The backfill (`LOG_API_TAIL` lines, default 1000) is grepped with
-`LOG_ERROR_PATTERN` (default `\berr(or)?s?\b`, case-insensitive — this
-matches `err` / `ERROR` / `errors` as words but not `stderr`). Any
-match FAILs the pair and prints the matched lines.
+`LOG_ERROR_PATTERN` (default `\berr(or)?s?\b|\bcrash(ed|es|ing)?\b`,
+case-insensitive — matches `err` / `ERROR` / `errors` / `crashed` as
+words but not `stderr`). Any match FAILs the pair and prints the
+matched lines.
 
 Skipped (not failed) when no Runpod API key is available (same
 discovery as the GPU catalog: `RUNPOD_API_KEY` env var or

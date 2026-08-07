@@ -720,6 +720,57 @@ def fetch_pod_logs_api(
     return lines
 
 
+def pod_status_api(pod_id: str) -> Optional[str]:
+    """Fetch the pod lifecycle `status` from `GET /v2/pods/{id}` (REST v2).
+
+    Returns one of PROVISIONING / STARTING / RUNNING / EXITED / ERROR /
+    TERMINATED, or None when the API key is missing or the request
+    failed — callers must treat None as "no signal" and fall back to
+    the CLI-derived state.
+
+    Unlike the legacy `desiredStatus` (which reports RUNNING as soon as
+    the pod is scheduled, even when the container never starts), the v2
+    `status` distinguishes STARTING from RUNNING and surfaces ERROR for
+    unrecoverable container-start failures — e.g. a host-side mount bug
+    that aborts `runc` at container init."""
+    from .instances import _load_runpod_api_key
+
+    api_key = _load_runpod_api_key()
+    if not api_key:
+        return None
+    req = urllib.request.Request(
+        f"https://api.runpod.io/v2/pods/{pod_id}",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": "test-images.py/1.0 (+runpod-smoketest)",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read())
+    except (urllib.error.HTTPError, OSError, json.JSONDecodeError):
+        return None
+    status = payload.get("status")
+    return status if isinstance(status, str) else None
+
+
+def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:
+    """Fetch host-side system logs (`GET /v2/pods/{id}/logs?source=system`)
+    and return the lines matching SYS_LOG_ERROR_PATTERN.
+
+    System logs are where Runpod surfaces host/runtime failures that
+    never reach container stdout — image pull errors, and container-init
+    aborts like `error starting container: ... failed to fulfil mount
+    request`. Returns None when the log API is unavailable (no key /
+    request failed), [] when logs were fetched but nothing matched."""
+    lines = fetch_pod_logs_api(pod_id, source="system")
+    if lines is None:
+        return None
+    pattern = re.compile(config.SYS_LOG_ERROR_PATTERN, re.IGNORECASE)
+    return [ln for ln in lines if pattern.search(ln)][:max_lines]
+
+
 def scan_pod_logs_for_errors(pod_id: str) -> tuple[bool, str]:
     """Fetch container logs via the REST API and grep them for error
     markers (config.LOG_ERROR_PATTERN, case-insensitive).
@@ -837,6 +888,19 @@ def dump_pod_logs(pod_id: str, image: str) -> None:
     if api_lines:
         log(f"--- container logs via API ({len(api_lines)} lines) ---", indent=2)
         for line in api_lines:
+            log(f"  {line}", indent=2)
+
+    # Host-side system logs: only the error-marker lines, since the full
+    # stream is mostly routine lifecycle noise. This is where container-
+    # init failures live — the container log stream is empty when the
+    # container never started at all.
+    sys_errors = system_log_errors(pod_id)
+    if sys_errors:
+        log(
+            f"--- system-log error markers via API ({len(sys_errors)}) ---",
+            indent=2,
+        )
+        for line in sys_errors:
             log(f"  {line}", indent=2)
 
     if not (host and port):
