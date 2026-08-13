@@ -258,19 +258,33 @@ _PIP_MANAGER_TIMEOUT_SEC = 5
 
 
 def pip_check_command() -> str:
-    """Prefer ComfyUI venv if present, else system python. Time pip --version."""
+    """Prefer ComfyUI venv if present, else system python. Time pip --version.
+
+    Timing is sub-second (bash 5's $EPOCHREALTIME, microsecond precision):
+    with whole-second timestamps a run of up to 5.99s could be recorded
+    as 5 and slip under ComfyUI-Manager's 5s budget. Falls back to whole
+    seconds via `date +%s` on shells without EPOCHREALTIME, so the check
+    degrades rather than erroring. Timestamps deliberately avoid invoking
+    python — a python-based clock would pre-warm the interpreter from the
+    network volume and bias the very cold-start cost we're measuring."""
+    timeout_ms = _PIP_MANAGER_TIMEOUT_SEC * 1000
     return (
         "set -e; "
+        # ${EPOCHREALTIME//[.,]/} -> microseconds as an integer (the
+        # decimal separator is locale-dependent, hence [.,]).
+        "now_ms() { if [ -n \"$EPOCHREALTIME\" ]; "
+        "then t=${EPOCHREALTIME//[.,]/}; echo $((t / 1000)); "
+        "else echo $(( $(date +%s) * 1000 )); fi; }; "
         "PY=/workspace/runpod-slim/ComfyUI/.venv-cu128/bin/python; "
         "[ -x \"$PY\" ] || PY=/workspace/runpod-slim/ComfyUI/.venv/bin/python; "
         "[ -x \"$PY\" ] || PY=python; "
         "echo \"pip check interpreter: $PY\"; "
-        "START=$(date +%s); "
+        "START_MS=$(now_ms); "
         "\"$PY\" -m pip --version; "
-        "ELAPSED=$(($(date +%s)-START)); "
-        "echo \"pip_wall_sec=$ELAPSED\"; "
-        f"[ \"$ELAPSED\" -le {_PIP_MANAGER_TIMEOUT_SEC} ] "
-        f"  || {{ echo \"FAIL: pip took ${{ELAPSED}}s "
+        "ELAPSED_MS=$(($(now_ms)-START_MS)); "
+        "echo \"pip_wall_ms=$ELAPSED_MS\"; "
+        f"[ \"$ELAPSED_MS\" -le {timeout_ms} ] "
+        f"  || {{ echo \"FAIL: pip took ${{ELAPSED_MS}}ms "
         f"(>{_PIP_MANAGER_TIMEOUT_SEC}s ComfyUI-Manager timeout)\"; exit 1; }}; "
         "echo 'pip check OK'"
     )
@@ -527,6 +541,15 @@ def run_port_check(
     return (proc.returncode == 0), last_line
 
 
+def _proxy_status_ok(code: int) -> bool:
+    """Statuses accepted as "service is up behind the proxy": 2xx/3xx,
+    plus 401/403 for apps that auth-gate their root path. 404 is
+    deliberately NOT accepted — the Runpod proxy answers 404 on its own
+    while the pod is missing from its routing table, which is
+    indistinguishable from the app here."""
+    return 200 <= code < 400 or code in (401, 403)
+
+
 def run_port_proxy_check(
     pod_id: str, test_port: int,
 ) -> tuple[bool, str]:
@@ -535,10 +558,12 @@ def run_port_proxy_check(
     `<port>/http` declarations get registered) AND the server actually
     answers end-to-end.
 
-    Like `port_check_command`, accepts 2xx-4xx as success — many apps
-    return 401/403 on / when no auth header is provided, which still
-    means "server is up and proxied". Only 5xx and transport errors
-    count as failure.
+    Success is 2xx/3xx plus 401/403 (auth-protected apps legitimately
+    reject an unauthenticated GET on /). Everything else — notably 404,
+    which the Runpod proxy itself returns while the pod isn't registered
+    in its routing table yet — is retried until the deadline and then
+    counts as failure, so a proxy-generated 404 can't masquerade as a
+    healthy service.
     """
     url = f"https://{pod_id}-{test_port}.proxy.runpod.net/"
     deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
@@ -560,14 +585,14 @@ def run_port_proxy_check(
                 lines.append(
                     f"attempt #{attempt}: HTTP {code} body={body[:160]!r}"
                 )
-                if code < 500:
+                if _proxy_status_ok(code):
                     return True, "\n".join(lines)
                 last_err = f"HTTP {code}"
         except urllib.error.HTTPError as e:
-            # 4xx is raised as HTTPError by urlopen; treat them as success
-            # (server responded, just unauthenticated/redirected). Only
-            # 5xx and the connection-level errors below count as failure.
-            if e.code < 500:
+            # 4xx is raised as HTTPError by urlopen. 401/403 mean the app
+            # is up but wants auth — success. 404 may come from the proxy
+            # itself (pod not routed yet), so it is retried, not accepted.
+            if _proxy_status_ok(e.code):
                 lines.append(
                     f"attempt #{attempt}: HTTP {e.code} {e.reason} "
                     "(server responding)"
@@ -583,8 +608,9 @@ def run_port_proxy_check(
         time.sleep(5)
 
     lines.append(
-        f"FAIL: proxy unreachable after {config.PORT_PROXY_TIMEOUT}s "
-        f"({attempt} attempts), last error: {last_err}"
+        f"FAIL: no healthy response (2xx/3xx/401/403) via proxy after "
+        f"{config.PORT_PROXY_TIMEOUT}s ({attempt} attempts), "
+        f"last error: {last_err}"
     )
     return False, "\n".join(lines)
 
@@ -771,17 +797,50 @@ def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:
     return [ln for ln in lines if pattern.search(ln)][:max_lines]
 
 
+# Every image logs plenty on boot (start.sh alone), so an empty fetch
+# means the log API glitched or the container never started — retry,
+# and if it stays empty treat the scan as unverified (= FAIL), never
+# as a silent pass.
+_LOG_SCAN_ATTEMPTS = 3
+_LOG_SCAN_RETRY_SLEEP_SEC = 10
+
+
 def scan_pod_logs_for_errors(pod_id: str) -> tuple[bool, str]:
     """Fetch container logs via the REST API and grep them for error
     markers (config.LOG_ERROR_PATTERN, case-insensitive).
 
-    Returns (ok, report). ok=True when no matches; the report always
-    includes how many lines were scanned so a silent empty fetch doesn't
-    masquerade as a pass. When the API is unavailable the scan is
-    skipped (ok=True) — SSH-based diagnostics still cover us."""
-    lines = fetch_pod_logs_api(pod_id)
-    if lines is None:
-        return True, "(log API unavailable — scan skipped)"
+    Returns (ok, report). ok=True only when actual log lines were
+    fetched and none matched. An empty or failed fetch is retried up to
+    _LOG_SCAN_ATTEMPTS times and then reported as ok=False — our images
+    always produce startup logs, so "0 lines" means the scan verified
+    nothing. The scan is skipped (ok=True) only when no API key is
+    configured — retrying can't help there, and SSH-based diagnostics
+    still cover us."""
+    from .instances import _load_runpod_api_key
+
+    if not _load_runpod_api_key():
+        return True, "(no API key — log scan skipped)"
+
+    failures: list[str] = []
+    for attempt in range(1, _LOG_SCAN_ATTEMPTS + 1):
+        lines = fetch_pod_logs_api(pod_id)
+        if lines:
+            break
+        failures.append(
+            f"attempt #{attempt}: "
+            + ("fetch failed" if lines is None else "0 log lines")
+        )
+        if attempt < _LOG_SCAN_ATTEMPTS:
+            time.sleep(_LOG_SCAN_RETRY_SLEEP_SEC)
+    else:
+        return False, (
+            "log scan UNVERIFIED — the log API returned no container "
+            f"logs after {_LOG_SCAN_ATTEMPTS} attempts "
+            f"({'; '.join(failures)}). start.sh always logs on boot, so "
+            "an empty result means the fetch is broken or the container "
+            "never started — not a clean pass."
+        )
+
     pattern = re.compile(config.LOG_ERROR_PATTERN, re.IGNORECASE)
     matches = [ln for ln in lines if pattern.search(ln)]
     if not matches:

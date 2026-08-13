@@ -30,7 +30,7 @@ from .checks import (
     scan_pod_logs_for_errors,
     ssh_probe,
 )
-from .comfyui import run_comfyui_check
+from .comfyui import probe_comfyui_alive, run_comfyui_check
 from .instances import detect_cuda_version, resolve_gpu_id
 from .log import log, set_worker_context
 from .pod import (
@@ -434,9 +434,16 @@ def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:
     for line in report.splitlines():
         log(f"  {line}", indent=2)
     if not ok:
-        log("log scan FAILED -- error markers found in container logs", indent=2)
+        # Two failure modes: error markers matched, or the fetch stayed
+        # empty and the scan verified nothing (see scan_pod_logs_for_errors).
+        detail = (
+            "log scan unverified — log API returned no container logs"
+            if report.startswith("log scan UNVERIFIED")
+            else "error markers found in container logs"
+        )
+        log(f"log scan FAILED -- {detail}", indent=2)
         dump_pod_logs(pod_id, image)
-        return "FAIL", "error markers found in container logs"
+        return "FAIL", detail
     log("log scan passed", indent=2)
     return None
 
@@ -466,6 +473,43 @@ def _run_dwell_step(pod_id: str, image: str) -> Optional[_Outcome]:
         "container crashed after initial boot "
         f"({config.DWELL_SEC}s dwell re-probe failed: {err})"
     )
+
+
+def _run_post_dwell_steps(
+    pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Re-verify the pod AFTER the dwell window.
+
+    The dwell SSH re-probe alone can't catch a late ComfyUI death:
+    start.sh keeps the container (and SSH) alive via `sleep infinity`
+    after a crash, and the pre-dwell log scan ran before the crash
+    happened. So, when dwell actually waited, we (1) re-probe ComfyUI
+    through the proxy if this group tests it, and (2) re-scan the
+    container logs for error markers picked up during the window."""
+    if config.DWELL_SEC <= 0:
+        return None
+
+    # (1) ComfyUI must still answer — quick probe, not a readiness wait.
+    if config.GROUP_TEST_COMFYUI.get(group, False) or \
+            config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
+        log("re-probing ComfyUI after dwell...", indent=2)
+        ok, detail = probe_comfyui_alive(pod_id)
+        if not ok:
+            log(
+                f"ComfyUI re-probe FAILED after dwell ({detail}) — "
+                "it died during the dwell window",
+                indent=2,
+            )
+            dump_pod_logs(pod_id, image)
+            return "FAIL", (
+                f"ComfyUI stopped answering during the {config.DWELL_SEC}s "
+                f"dwell (post-dwell probe: {detail})"
+            )
+        log(f"ComfyUI re-probe passed ({detail})", indent=2)
+
+    # (2) Final log scan — covers anything logged during the window.
+    log("re-scanning container logs after dwell...", indent=2)
+    return _run_log_scan_step(pod_id, image)
 
 
 def test_pair(image: str, instance: str, group: str) -> _Outcome:
@@ -540,6 +584,9 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
         if outcome is not None:
             return outcome
         outcome = _run_dwell_step(pod_id, image)
+        if outcome is not None:
+            return outcome
+        outcome = _run_post_dwell_steps(pod_id, image, group)
         if outcome is not None:
             return outcome
 

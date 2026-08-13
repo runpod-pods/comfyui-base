@@ -80,6 +80,32 @@ def _load_json_file(path: str):
 # ---------------------------------------------------------------------------
 
 
+def probe_comfyui_alive(
+    pod_id: str, retries: int = 3, retry_sleep: int = 5,
+) -> tuple[bool, str]:
+    """Quick "is ComfyUI still answering?" probe: GET /system_stats via
+    the public proxy, a few retries to absorb transient proxy-replica
+    errors. Unlike `_wait_server` this is NOT a readiness wait — ComfyUI
+    already proved reachable earlier, so a short budget is enough.
+
+    Used for the post-dwell re-check: ComfyUI can crash during the dwell
+    window while SSH stays up (start.sh keeps the container alive via
+    `sleep infinity` after a crash). Returns (ok, detail)."""
+    base = _base_url(pod_id)
+    last = ""
+    for attempt in range(1, retries + 1):
+        try:
+            code, _ = _get(base + "/system_stats", timeout=10)
+            if code == 200:
+                return True, f"HTTP 200 (attempt #{attempt})"
+            last = f"HTTP {code}"
+        except OSError as e:
+            last = f"{type(e).__name__}: {e}"
+        if attempt < retries:
+            time.sleep(retry_sleep)
+    return False, last
+
+
 def _wait_server(base: str, emit: Callable[[str], None]) -> bool:
     """Poll ``/system_stats`` through the proxy until it answers 200. The
     public proxy is eventually-consistent (a fresh pod takes ~10-30s to enter
