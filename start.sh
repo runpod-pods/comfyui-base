@@ -294,11 +294,28 @@ fi
 echo "Starting ComfyUI with args: $FIXED_ARGS"
 python main.py $FIXED_ARGS &
 COMFY_PID=$!
-trap "kill $COMFY_PID 2>/dev/null" SIGTERM SIGINT
-wait $COMFY_PID || true
+
+# Distinguish a real ComfyUI crash from the pod being stopped/restarted/
+# terminated (RunPod sends SIGTERM to PID 1, which we forward to ComfyUI —
+# without the flag the crash banner would print on every normal shutdown).
+SHUTTING_DOWN=0
+trap 'SHUTTING_DOWN=1; kill $COMFY_PID 2>/dev/null' SIGTERM SIGINT
+
+COMFY_EXIT=0
+wait $COMFY_PID || COMFY_EXIT=$?
+
+if [ "$SHUTTING_DOWN" = "1" ]; then
+    echo "Pod is shutting down (stop/restart/terminate) — stopping ComfyUI, Jupyter and FileBrowser."
+    # Docker only signals PID 1; stop the nohup'd background services too so
+    # they exit cleanly instead of waiting for SIGKILL.
+    pkill -TERM -f "jupyter-lab" 2>/dev/null || true
+    pkill -TERM -x "filebrowser" 2>/dev/null || true
+    exit 0
+fi
 
 echo "============================================="
-echo "  ComfyUI crashed — check the logs above."
+echo "  ComfyUI exited unexpectedly (exit code $COMFY_EXIT)."
+echo "  Check the logs above for the error/traceback."
 echo "  SSH and JupyterLab are still available."
 echo "  To restart after fixing:"
 echo "    cd $COMFYUI_DIR && source .venv-cu128/bin/activate"
