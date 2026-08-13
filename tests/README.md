@@ -266,8 +266,8 @@ Field reference:
 | `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:`, budget, or `check_all_gpu` selection. Useful for blocking known-bad host pairings without rewriting the whole list — e.g. `"*Blackwell*"` skips every Blackwell GPU (sm\_100 / sm\_120 are not in the kernel set of PyTorch ≤ 2.6 wheels). |
 | `min_cuda_version` | `X.Y` string passed to `runpodctl pod create --min-cuda-version`. Only used as a **fallback** when the image tag itself doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`). Image tags like `cu1281` / `cuda1281` always win. |
 | `test_jupyter` | `true` / `false` — when true, the pod is created with `JUPYTER_PASSWORD=admin` in env and HTTP port 8888 exposed, then the script SSHes in and verifies JupyterLab is actually listening **with Jupyter-specific assertions** (`jupyter server list`, `/api/status` with token). Use for groups whose images use `container-template/start.sh` (`runpod/base`, `runpod/pytorch`, `runpod/autoresearch`, `rocm`). Skip for NGC `nvidia-pytorch` (different entrypoint). Default: `false`. |
-| `test_ports` | List of TCP ports the image is expected to serve over HTTP. Each port is exposed as `<port>/http` so Runpod's public proxy registers it, then the runner probes the port twice: (1) in-pod via SSH (`curl http://127.0.0.1:<port>/`), (2) via the public proxy (`https://<pod-id>-<port>.proxy.runpod.net/`). Generic counterpart to `test_jupyter` — no app-specific assertions: the proxy probe accepts 2xx/3xx/401/403 (404 is retried — the proxy itself 404s while the pod isn't routed yet), the in-pod probe accepts any HTTP `<500`. Use for ComfyUI (`8188`), FileBrowser (`8080`), or any app where you only need to verify "it's listening". Can coexist with `test_jupyter: true` (Jupyter on 8888 is still checked with the Jupyter-specific probes; any other port in `test_ports` gets the generic one). Default: empty. |
-| `test_comfyui` | `true` / `false` — ComfyUI **reachability smoke**. A ComfyUI-branded alias for `test_ports: [8188]`: exposes `:8188` as `8188/http` and probes it twice — in-pod (`curl 127.0.0.1:8188`) and via the public Runpod proxy (`https://<pod-id>-8188.proxy.runpod.net/`). The proxy probe accepts 2xx/3xx/401/403 (404 is retried); the in-pod one accepts any HTTP `<500`. Answers **"is ComfyUI up and reachable from a browser?"** — not whether it can generate. Cheap (no download, no GPU work). Also enabled implicitly by `test_comfyui_functional`. Default: `false`. |
+| `test_ports` | List of TCP ports the image is expected to serve over HTTP. Each port is exposed as `<port>/http` so Runpod's public proxy registers it, then the runner probes the port twice: (1) in-pod via SSH (`curl http://127.0.0.1:<port>/`), (2) via the public proxy (`https://<pod-id>-<port>.proxy.runpod.net/`). Generic counterpart to `test_jupyter` — no app-specific assertions: the proxy probe requires HTTP 200 (anything else is retried until the deadline — the proxy itself 404s while the pod isn't routed yet), the in-pod probe accepts any HTTP `<500`. Use for ComfyUI (`8188`), FileBrowser (`8080`), or any app where you only need to verify "it's listening". Can coexist with `test_jupyter: true` (Jupyter on 8888 is still checked with the Jupyter-specific probes; any other port in `test_ports` gets the generic one). Default: empty. |
+| `test_comfyui` | `true` / `false` — ComfyUI **reachability smoke**. A ComfyUI-branded alias for `test_ports: [8188]`: exposes `:8188` as `8188/http` and probes it twice — in-pod (`curl 127.0.0.1:8188`) and via the public Runpod proxy (`https://<pod-id>-8188.proxy.runpod.net/`). The proxy probe requires HTTP 200 (anything else is retried); the in-pod one accepts any HTTP `<500`. Answers **"is ComfyUI up and reachable from a browser?"** — not whether it can generate. Cheap (no download, no GPU work). Also enabled implicitly by `test_comfyui_functional`. Default: `false`. |
 | `test_comfyui_functional` | `true` / `false` — ComfyUI **end-to-end functional check**. Proves the image can actually **generate an image**, run **host-side against the public proxy URL** (`https://<pod-id>-8188.proxy.runpod.net`, no SSH): provisions the checkpoint(s) from [`tests/comfyui/models.json`](comfyui/models.json) via the baked-in [ComfyUI-RunpodDirect](https://github.com/MadiatorLabs/ComfyUI-RunpodDirect) node's `/server_download/*` routes, POSTs the workflow [`tests/comfyui/workflows/gsl_starter_1_1.api.json`](comfyui/workflows/gsl_starter_1_1.api.json) (the "1.1 Starter – Text to Image" template) to `/prompt`, polls `/history`, then fetches the result via `/view` and asserts it's a real, non-empty PNG. **Implies `test_comfyui`** — the reachability smoke runs first and the generation only runs if it passes (no point spending GPU time on an unreachable ComfyUI). Heavier: pulls a ~2 GB model + uses GPU time, so gate it behind an enabler. Default: `false`. |
 
 The `base_cpu` group is special: `runpodctl` 2.3.0 does not let us pick
@@ -494,13 +494,14 @@ For every port in the list, proxy-first:
 1. **Public proxy.** From the test machine, `GET
    https://<pod-id>-<port>.proxy.runpod.net/`, retried for up to
    `PORT_PROXY_TIMEOUT` seconds (must absorb the app's cold start plus
-   the proxy's ~10-30s registration lag). The probe accepts **2xx/3xx
-   plus 401/403** (many apps auth-gate `/` — that's still a "service is
-   up" signal). **404 is retried, not accepted**: the Runpod proxy
-   answers 404 on its own while the pod is missing from its routing
-   table, so a 404 can't be told apart from the app and must not pass
-   the check. Passing proves both "service up" and "port exposed as
-   `<port>/http`", so the in-pod probe is skipped.
+   the proxy's ~10-30s registration lag). The probe requires a strict
+   **HTTP 200** — anything else is retried until the deadline and then
+   fails. Notably 404: the Runpod proxy answers 404 on its own while
+   the pod is missing from its routing table, so a 404 can't be told
+   apart from the app and must not pass the check. Every app we test
+   serves 200 on `/` (redirects are followed, so a healthy redirect
+   chain still ends in 200). Passing proves both "service up" and
+   "port exposed as `<port>/http`", so the in-pod probe is skipped.
 2. **In-pod (diagnostic, only on proxy failure).** SSH in and run a
    retry loop for up to `PORT_WAIT_TIMEOUT` seconds: probe
    `/dev/tcp/127.0.0.1/<port>` for binding, then `curl
@@ -531,8 +532,8 @@ separate manifest fields, but the functional one implies the smoke one:
 **`test_comfyui` (reachability smoke).** A ComfyUI-branded alias for
 `test_ports: [8188]`: exposes `:8188` as `8188/http`, then probes it
 in-pod (`curl 127.0.0.1:8188`) and through the public Runpod proxy
-(2xx/3xx/401/403 accepted; a 404 is retried because the proxy itself
-emits 404 until the pod is routed). It only answers "is the server up and reachable
+(strict HTTP 200; anything else — including the 404 the proxy itself
+emits until the pod is routed — is retried, then fails). It only answers "is the server up and reachable
 from a browser?". Use it on every ComfyUI image — it's cheap. (You don't
 also need `test_ports: [8188]`; this replaces it. Keep `test_ports` for
 *other* ports like `8080` FileBrowser.)

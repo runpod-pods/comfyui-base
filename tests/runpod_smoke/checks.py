@@ -542,12 +542,13 @@ def run_port_check(
 
 
 def _proxy_status_ok(code: int) -> bool:
-    """Statuses accepted as "service is up behind the proxy": 2xx/3xx,
-    plus 401/403 for apps that auth-gate their root path. 404 is
-    deliberately NOT accepted — the Runpod proxy answers 404 on its own
-    while the pod is missing from its routing table, which is
-    indistinguishable from the app here."""
-    return 200 <= code < 400 or code in (401, 403)
+    """Only HTTP 200 counts as "service is healthy behind the proxy".
+    Everything else is retried until the deadline: the Runpod proxy
+    answers 404 on its own while the pod is missing from its routing
+    table (indistinguishable from the app here), and every app we test
+    (FileBrowser, ComfyUI, Tensorboard) serves 200 on / — redirects are
+    followed by urllib, so a healthy redirect chain still ends in 200."""
+    return code == 200
 
 
 def run_port_proxy_check(
@@ -558,12 +559,11 @@ def run_port_proxy_check(
     `<port>/http` declarations get registered) AND the server actually
     answers end-to-end.
 
-    Success is 2xx/3xx plus 401/403 (auth-protected apps legitimately
-    reject an unauthenticated GET on /). Everything else — notably 404,
-    which the Runpod proxy itself returns while the pod isn't registered
-    in its routing table yet — is retried until the deadline and then
-    counts as failure, so a proxy-generated 404 can't masquerade as a
-    healthy service.
+    Success is strictly HTTP 200 (see _proxy_status_ok). Everything else
+    — notably 404, which the Runpod proxy itself returns while the pod
+    isn't registered in its routing table yet — is retried until the
+    deadline and then counts as failure, so a proxy-generated 404 can't
+    masquerade as a healthy service.
     """
     url = f"https://{pod_id}-{test_port}.proxy.runpod.net/"
     deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
@@ -589,9 +589,9 @@ def run_port_proxy_check(
                     return True, "\n".join(lines)
                 last_err = f"HTTP {code}"
         except urllib.error.HTTPError as e:
-            # 4xx is raised as HTTPError by urlopen. 401/403 mean the app
-            # is up but wants auth — success. 404 may come from the proxy
-            # itself (pod not routed yet), so it is retried, not accepted.
+            # 4xx/5xx are raised as HTTPError by urlopen — all retried
+            # (404 may come from the proxy itself while the pod isn't
+            # routed yet; anything else means the app isn't healthy yet).
             if _proxy_status_ok(e.code):
                 lines.append(
                     f"attempt #{attempt}: HTTP {e.code} {e.reason} "
@@ -608,7 +608,7 @@ def run_port_proxy_check(
         time.sleep(5)
 
     lines.append(
-        f"FAIL: no healthy response (2xx/3xx/401/403) via proxy after "
+        f"FAIL: no HTTP 200 via proxy after "
         f"{config.PORT_PROXY_TIMEOUT}s ({attempt} attempts), "
         f"last error: {last_err}"
     )
