@@ -2,6 +2,8 @@
 
   * ssh_probe — one-shot connection probe, used as the real readiness signal
   * cuda_check_command / run_cuda_check — torch.cuda or nvidia-smi assertion
+  * pip_check_command / run_pip_check — always-on `python -m pip --version`
+    with wall-clock timing (catches ComfyUI-Manager's 5s pip probe timeout)
   * jupyter_check_command / run_jupyter_check — in-pod Jupyter probe over SSH
   * run_jupyter_proxy_check — public proxy probe from the test machine
   * fetch_logs_via_ssh / dump_pod_logs — pull diagnostic info before terminating
@@ -12,6 +14,7 @@ group name: new groups added in the future won't silently skip the check.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -244,6 +247,59 @@ def run_cuda_check(host: str, port: int, image: str) -> tuple[bool, str]:
         return False, _SSH_BINARY_NOT_FOUND
     combined = (r.stdout + r.stderr).strip()
     return (r.returncode == 0), combined
+
+
+# ---------------------------------------------------------------------------
+# Pip check (always on — no manifest enabler)
+# ---------------------------------------------------------------------------
+
+# ComfyUI-Manager's get_pip_cmd() times out `python -m pip --version` at 5s.
+_PIP_MANAGER_TIMEOUT_SEC = 5
+
+
+def pip_check_command() -> str:
+    """Prefer ComfyUI venv if present, else system python. Time pip --version.
+
+    Timing is sub-second (bash 5's $EPOCHREALTIME, microsecond precision):
+    with whole-second timestamps a run of up to 5.99s could be recorded
+    as 5 and slip under ComfyUI-Manager's 5s budget. Falls back to whole
+    seconds via `date +%s` on shells without EPOCHREALTIME, so the check
+    degrades rather than erroring. Timestamps deliberately avoid invoking
+    python — a python-based clock would pre-warm the interpreter from the
+    network volume and bias the very cold-start cost we're measuring."""
+    timeout_ms = _PIP_MANAGER_TIMEOUT_SEC * 1000
+    return (
+        "set -e; "
+        # ${EPOCHREALTIME//[.,]/} -> microseconds as an integer (the
+        # decimal separator is locale-dependent, hence [.,]).
+        "now_ms() { if [ -n \"$EPOCHREALTIME\" ]; "
+        "then t=${EPOCHREALTIME//[.,]/}; echo $((t / 1000)); "
+        "else echo $(( $(date +%s) * 1000 )); fi; }; "
+        "PY=/workspace/runpod-slim/ComfyUI/.venv-cu128/bin/python; "
+        "[ -x \"$PY\" ] || PY=/workspace/runpod-slim/ComfyUI/.venv/bin/python; "
+        "[ -x \"$PY\" ] || PY=python; "
+        "echo \"pip check interpreter: $PY\"; "
+        "START_MS=$(now_ms); "
+        "\"$PY\" -m pip --version; "
+        "ELAPSED_MS=$(($(now_ms)-START_MS)); "
+        "echo \"pip_wall_ms=$ELAPSED_MS\"; "
+        f"[ \"$ELAPSED_MS\" -le {timeout_ms} ] "
+        f"  || {{ echo \"FAIL: pip took ${{ELAPSED_MS}}ms "
+        f"(>{_PIP_MANAGER_TIMEOUT_SEC}s ComfyUI-Manager timeout)\"; exit 1; }}; "
+        "echo 'pip check OK'"
+    )
+
+
+def run_pip_check(host: str, port: int) -> tuple[bool, str]:
+    """SSH into the pod and run the always-on pip probe."""
+    ssh_cmd = [*_ssh_command_prefix(host, port), pip_check_command()]
+    try:
+        r = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return False, "pip check timed out after 60s"
+    except FileNotFoundError:
+        return False, _SSH_BINARY_NOT_FOUND
+    return (r.returncode == 0), (r.stdout + r.stderr).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +541,16 @@ def run_port_check(
     return (proc.returncode == 0), last_line
 
 
+def _proxy_status_ok(code: int) -> bool:
+    """Only HTTP 200 counts as "service is healthy behind the proxy".
+    Everything else is retried until the deadline: the Runpod proxy
+    answers 404 on its own while the pod is missing from its routing
+    table (indistinguishable from the app here), and every app we test
+    (FileBrowser, ComfyUI, Tensorboard) serves 200 on / — redirects are
+    followed by urllib, so a healthy redirect chain still ends in 200."""
+    return code == 200
+
+
 def run_port_proxy_check(
     pod_id: str, test_port: int,
 ) -> tuple[bool, str]:
@@ -493,10 +559,11 @@ def run_port_proxy_check(
     `<port>/http` declarations get registered) AND the server actually
     answers end-to-end.
 
-    Like `port_check_command`, accepts 2xx-4xx as success — many apps
-    return 401/403 on / when no auth header is provided, which still
-    means "server is up and proxied". Only 5xx and transport errors
-    count as failure.
+    Success is strictly HTTP 200 (see _proxy_status_ok). Everything else
+    — notably 404, which the Runpod proxy itself returns while the pod
+    isn't registered in its routing table yet — is retried until the
+    deadline and then counts as failure, so a proxy-generated 404 can't
+    masquerade as a healthy service.
     """
     url = f"https://{pod_id}-{test_port}.proxy.runpod.net/"
     deadline = time.monotonic() + config.PORT_PROXY_TIMEOUT
@@ -518,14 +585,14 @@ def run_port_proxy_check(
                 lines.append(
                     f"attempt #{attempt}: HTTP {code} body={body[:160]!r}"
                 )
-                if code < 500:
+                if _proxy_status_ok(code):
                     return True, "\n".join(lines)
                 last_err = f"HTTP {code}"
         except urllib.error.HTTPError as e:
-            # 4xx is raised as HTTPError by urlopen; treat them as success
-            # (server responded, just unauthenticated/redirected). Only
-            # 5xx and the connection-level errors below count as failure.
-            if e.code < 500:
+            # 4xx/5xx are raised as HTTPError by urlopen — all retried
+            # (404 may come from the proxy itself while the pod isn't
+            # routed yet; anything else means the app isn't healthy yet).
+            if _proxy_status_ok(e.code):
                 lines.append(
                     f"attempt #{attempt}: HTTP {e.code} {e.reason} "
                     "(server responding)"
@@ -541,8 +608,9 @@ def run_port_proxy_check(
         time.sleep(5)
 
     lines.append(
-        f"FAIL: proxy unreachable after {config.PORT_PROXY_TIMEOUT}s "
-        f"({attempt} attempts), last error: {last_err}"
+        f"FAIL: no HTTP 200 via proxy after "
+        f"{config.PORT_PROXY_TIMEOUT}s ({attempt} attempts), "
+        f"last error: {last_err}"
     )
     return False, "\n".join(lines)
 
@@ -611,6 +679,183 @@ def run_jupyter_proxy_check(pod_id: str) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# Container logs via REST API (v2) + error scan
+# ---------------------------------------------------------------------------
+
+
+def fetch_pod_logs_api(
+    pod_id: str,
+    tail: int = 0,
+    source: str = "container",
+    deadline_sec: int = 15,
+) -> Optional[list[str]]:
+    """Fetch pod logs from `GET /v2/pods/{id}/logs` (SSE stream).
+
+    The endpoint backfills `tail` historical lines then keeps the stream
+    open for live lines — we only want the backfill, so we read until
+    `deadline_sec` or until the socket goes idle, then close.
+
+    Returns log lines, or None when the API key is missing / the request
+    failed (caller falls back to SSH)."""
+    from .instances import _load_runpod_api_key
+
+    api_key = _load_runpod_api_key()
+    if not api_key:
+        return None
+
+    tail = tail or config.LOG_API_TAIL
+    url = (
+        f"https://api.runpod.io/v2/pods/{pod_id}/logs"
+        f"?source={source}&tail={tail}"
+    )
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "text/event-stream",
+            "User-Agent": "test-images.py/1.0 (+runpod-smoketest)",
+        },
+    )
+    lines: list[str] = []
+    deadline = time.monotonic() + deadline_sec
+    try:
+        # The 3s socket timeout doubles as the idle detector: once the
+        # backfill is drained the server goes quiet and readline() times
+        # out, which is our signal to stop.
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            while time.monotonic() < deadline:
+                try:
+                    raw = resp.readline()
+                except OSError:
+                    break  # idle — backfill drained
+                if not raw:
+                    break  # stream closed
+                text = raw.decode("utf-8", errors="replace").strip()
+                if not text.startswith("data:"):
+                    continue
+                try:
+                    payload = json.loads(text[len("data:"):].strip())
+                except json.JSONDecodeError:
+                    continue
+                line = payload.get("line")
+                if line is not None:
+                    lines.append(line.rstrip())
+    except (urllib.error.HTTPError, OSError) as exc:
+        log(f"  (log API fetch failed: {exc})", indent=2)
+        return None
+    return lines
+
+
+def pod_status_api(pod_id: str) -> Optional[str]:
+    """Fetch the pod lifecycle `status` from `GET /v2/pods/{id}` (REST v2).
+
+    Returns one of PROVISIONING / STARTING / RUNNING / EXITED / ERROR /
+    TERMINATED, or None when the API key is missing or the request
+    failed — callers must treat None as "no signal" and fall back to
+    the CLI-derived state.
+
+    Unlike the legacy `desiredStatus` (which reports RUNNING as soon as
+    the pod is scheduled, even when the container never starts), the v2
+    `status` distinguishes STARTING from RUNNING and surfaces ERROR for
+    unrecoverable container-start failures — e.g. a host-side mount bug
+    that aborts `runc` at container init."""
+    from .instances import _load_runpod_api_key
+
+    api_key = _load_runpod_api_key()
+    if not api_key:
+        return None
+    req = urllib.request.Request(
+        f"https://api.runpod.io/v2/pods/{pod_id}",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+            "User-Agent": "test-images.py/1.0 (+runpod-smoketest)",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read())
+    except (urllib.error.HTTPError, OSError, json.JSONDecodeError):
+        return None
+    status = payload.get("status")
+    return status if isinstance(status, str) else None
+
+
+def system_log_errors(pod_id: str, max_lines: int = 20) -> Optional[list[str]]:
+    """Fetch host-side system logs (`GET /v2/pods/{id}/logs?source=system`)
+    and return the lines matching SYS_LOG_ERROR_PATTERN.
+
+    System logs are where Runpod surfaces host/runtime failures that
+    never reach container stdout — image pull errors, and container-init
+    aborts like `error starting container: ... failed to fulfil mount
+    request`. Returns None when the log API is unavailable (no key /
+    request failed), [] when logs were fetched but nothing matched."""
+    lines = fetch_pod_logs_api(pod_id, source="system")
+    if lines is None:
+        return None
+    pattern = re.compile(config.SYS_LOG_ERROR_PATTERN, re.IGNORECASE)
+    return [ln for ln in lines if pattern.search(ln)][:max_lines]
+
+
+# Every image logs plenty on boot (start.sh alone), so an empty fetch
+# means the log API glitched or the container never started — retry,
+# and if it stays empty treat the scan as unverified (= FAIL), never
+# as a silent pass.
+_LOG_SCAN_ATTEMPTS = 3
+_LOG_SCAN_RETRY_SLEEP_SEC = 10
+
+
+def scan_pod_logs_for_errors(pod_id: str) -> tuple[bool, str]:
+    """Fetch container logs via the REST API and grep them for error
+    markers (config.LOG_ERROR_PATTERN, case-insensitive).
+
+    Returns (ok, report). ok=True only when actual log lines were
+    fetched and none matched. An empty or failed fetch is retried up to
+    _LOG_SCAN_ATTEMPTS times and then reported as ok=False — our images
+    always produce startup logs, so "0 lines" means the scan verified
+    nothing. The scan is skipped (ok=True) only when no API key is
+    configured — retrying can't help there, and SSH-based diagnostics
+    still cover us."""
+    from .instances import _load_runpod_api_key
+
+    if not _load_runpod_api_key():
+        return True, "(no API key — log scan skipped)"
+
+    failures: list[str] = []
+    for attempt in range(1, _LOG_SCAN_ATTEMPTS + 1):
+        lines = fetch_pod_logs_api(pod_id)
+        if lines:
+            break
+        failures.append(
+            f"attempt #{attempt}: "
+            + ("fetch failed" if lines is None else "0 log lines")
+        )
+        if attempt < _LOG_SCAN_ATTEMPTS:
+            time.sleep(_LOG_SCAN_RETRY_SLEEP_SEC)
+    else:
+        return False, (
+            "log scan UNVERIFIED — the log API returned no container "
+            f"logs after {_LOG_SCAN_ATTEMPTS} attempts "
+            f"({'; '.join(failures)}). start.sh always logs on boot, so "
+            "an empty result means the fetch is broken or the container "
+            "never started — not a clean pass."
+        )
+
+    pattern = re.compile(config.LOG_ERROR_PATTERN, re.IGNORECASE)
+    matches = [ln for ln in lines if pattern.search(ln)]
+    if not matches:
+        return True, f"scanned {len(lines)} log lines — no error markers"
+    report = [
+        f"scanned {len(lines)} log lines — "
+        f"{len(matches)} matched /{config.LOG_ERROR_PATTERN}/i:"
+    ]
+    report.extend(f"  {ln}" for ln in matches[:40])
+    if len(matches) > 40:
+        report.append(f"  ... (+{len(matches) - 40} more)")
+    return False, "\n".join(report)
+
+
+# ---------------------------------------------------------------------------
 # Diagnostic log fetch
 # ---------------------------------------------------------------------------
 
@@ -647,77 +892,20 @@ def _gpu_smi_block(image: str) -> str:
     return ""
 
 
-def _runtime_state_block(tail: int) -> str:
-    """Shell snippet that dumps in-container runtime state useful for
-    diagnosing port-check failures:
+def fetch_logs_via_ssh(host: str, port: int, image: str) -> Optional[str]:
+    """SSH to the pod for the GPU SMI snapshot — the one diagnostic the
+    REST log API can't provide (container logs come from the API in
+    `dump_pod_logs`). Returns stdout on success, None if SSH didn't work.
 
-      * top processes (so we can see if main.py is still running, stuck in
-        cp -r, or already gone)
-      * listening TCP ports (so we can distinguish "ComfyUI never bound" from
-        "ComfyUI bound but firewalled/CORS-wedged"; ss prints the owning pid
-        so we link a port back to a process)
-      * size of /workspace/runpod-slim/ComfyUI (the first-boot cp -r of
-        ~8 GB is the biggest single warmup cost — knowing it's still growing
-        vs already done resolves "is it stuck or just slow" instantly)
-      * tails of side-server logs (start.sh redirects jupyter/filebrowser
-        stdout there; ComfyUI's own stdout goes to PID 1 stdout which we
-        can't read from another process, hence no comfy.log tail — see ps).
-    """
-    return (
-        "echo '=== ps (top 25 by RSS) ==='; "
-        "ps -eo pid,ppid,stat,rss,etime,cmd --sort=-rss --no-headers 2>/dev/null "
-        "  | head -n 25 || ps aux 2>&1 | head -n 25; "
-        "echo '=== listening TCP ports ==='; "
-        "if command -v ss >/dev/null 2>&1; then "
-        "  ss -tlnp 2>&1 | head -n 30; "
-        "elif command -v netstat >/dev/null 2>&1; then "
-        "  netstat -tlnp 2>&1 | head -n 30; "
-        "else "
-        "  echo '(neither ss nor netstat available)'; "
-        "fi; "
-        "echo '=== ComfyUI workspace state ==='; "
-        "if [ -d /workspace/runpod-slim/ComfyUI ]; then "
-        "  du -sh /workspace/runpod-slim/ComfyUI 2>/dev/null "
-        "    || echo '(du failed)'; "
-        "  ls /workspace/runpod-slim/ComfyUI/.venv-cu128 >/dev/null 2>&1 "
-        "    && echo 'venv: present' || echo 'venv: NOT yet created'; "
-        "else "
-        "  echo '(workspace ComfyUI dir not yet populated -- still in cp -r?)'; "
-        "fi; "
-        f"echo '=== last {tail} lines of /jupyter.log ==='; "
-        f"tail -n {tail} /jupyter.log 2>/dev/null || echo '(no /jupyter.log)'; "
-        f"echo '=== last {tail} lines of /filebrowser.log ==='; "
-        f"tail -n {tail} /filebrowser.log 2>/dev/null || echo '(no /filebrowser.log)'; "
-    )
-
-
-def fetch_logs_via_ssh(
-    host: str, port: int, image: str, tail: int = 20,
-) -> Optional[str]:
-    """SSH to the pod and grab the most useful diagnostic info from inside
-    the container. Returns stdout on success, None if SSH didn't work.
-
-    `image` is used to pick the right vendor SMI (rocm-smi vs nvidia-smi)
-    — without it we'd dump both on every pod and one of them would always
-    spew 'command not found' into the log.
+    `image` picks the right vendor SMI (rocm-smi vs nvidia-smi) so we
+    don't spew 'command not found' on the other vendor's pods.
     """
     if not config.SSH_LOG_FETCH:
         return None
-    remote_cmd = (
-        "set +e; "
-        "echo '=== uname / hostname ==='; uname -a; hostname; "
-        f"echo '=== last {tail} /var/log/syslog lines ==='; "
-        f"tail -n {tail} /var/log/syslog 2>/dev/null || echo '(no /var/log/syslog)'; "
-        f"echo '=== last {tail} dmesg lines ==='; "
-        f"dmesg --no-pager 2>/dev/null | tail -n {tail} || echo '(dmesg unavailable)'; "
-        "echo '=== /var/log/*.log tails ==='; "
-        "for f in /var/log/*.log; do "
-        "  [ -f \"$f\" ] || continue; "
-        "  echo \"--- $f ---\"; tail -n 5 \"$f\" 2>/dev/null; "
-        "done; "
-        + _gpu_smi_block(image)
-        + _runtime_state_block(tail)
-    )
+    smi_block = _gpu_smi_block(image)
+    if not smi_block:
+        return None  # CPU image — nothing SSH-only left to collect
+    remote_cmd = "set +e; " + smi_block
     cmd = [*_ssh_command_prefix(host, port), remote_cmd]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=45)
@@ -730,12 +918,10 @@ def fetch_logs_via_ssh(
     return f"__SSH_FAILED__\nreturncode={r.returncode}\nstderr: {r.stderr.strip()[:400]}"
 
 
-def dump_pod_logs(pod_id: str, image: str, tail: int = 20) -> None:
-    """Print pod metadata + container logs (via direct SSH) before
-    terminating. `image` is forwarded to `fetch_logs_via_ssh` so the
-    diagnostic dump only runs the vendor SMI that actually exists on the
-    pod (no more 'rocm-smi: command not found' on NVIDIA hosts).
-    """
+def dump_pod_logs(pod_id: str, image: str) -> None:
+    """Print pod metadata + full container-log backfill via the REST log
+    API + a GPU SMI snapshot via SSH before terminating. `image` picks
+    the vendor SMI (rocm-smi vs nvidia-smi)."""
     data = runpodctl_json("pod", "get", pod_id, timeout=30)
     if not isinstance(data, dict):
         log("(could not fetch pod state)", indent=2)
@@ -755,17 +941,37 @@ def dump_pod_logs(pod_id: str, image: str, tail: int = 20) -> None:
     ]:
         log(f"  {key:20s} = {val!r}", indent=2)
 
+    # Container stdout via the REST log API — the one source SSH can't
+    # reach (PID-1 stdout). Full LOG_API_TAIL backfill (default 1000).
+    api_lines = fetch_pod_logs_api(pod_id)
+    if api_lines:
+        log(f"--- container logs via API ({len(api_lines)} lines) ---", indent=2)
+        for line in api_lines:
+            log(f"  {line}", indent=2)
+
+    # Host-side system logs: only the error-marker lines, since the full
+    # stream is mostly routine lifecycle noise. This is where container-
+    # init failures live — the container log stream is empty when the
+    # container never started at all.
+    sys_errors = system_log_errors(pod_id)
+    if sys_errors:
+        log(
+            f"--- system-log error markers via API ({len(sys_errors)}) ---",
+            indent=2,
+        )
+        for line in sys_errors:
+            log(f"  {line}", indent=2)
+
     if not (host and port):
-        log("  (no SSH endpoint yet — skipping log fetch)", indent=2)
+        log("  (no SSH endpoint yet — skipping GPU SMI fetch)", indent=2)
         log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
         return
 
-    log(f"--- container/system logs via SSH (root@{host}:{port}) ---", indent=2)
-    logs = fetch_logs_via_ssh(host, int(port), image, tail=tail)
+    logs = fetch_logs_via_ssh(host, int(port), image)
     if logs is None:
-        log("  (SSH log fetch disabled or ssh binary not found)", indent=2)
-        log(f"  inspect via UI: https://www.runpod.io/console/pods/{pod_id}", indent=2)
+        # SSH fetch disabled, ssh binary missing, or CPU image (no SMI).
         return
+    log(f"--- GPU SMI via SSH (root@{host}:{port}) ---", indent=2)
     if logs.startswith("__SSH_FAILED__"):
         log("  SSH could not reach the pod:", indent=2)
         for line in logs.splitlines()[1:]:

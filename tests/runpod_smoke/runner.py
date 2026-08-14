@@ -24,13 +24,15 @@ from .checks import (
     run_cuda_check,
     run_jupyter_check,
     run_jupyter_proxy_check,
+    run_pip_check,
     run_port_check,
     run_port_proxy_check,
+    scan_pod_logs_for_errors,
     ssh_probe,
 )
-from .comfyui import run_comfyui_check
+from .comfyui import probe_comfyui_alive, run_comfyui_check
 from .instances import detect_cuda_version, resolve_gpu_id
-from .log import log
+from .log import log, set_worker_context
 from .pod import (
     TRANSIENT_RE,
     UNAVAILABLE_RE,
@@ -200,39 +202,47 @@ def _run_cuda_step(
     return None
 
 
+def _run_pip_step(
+    host: str, port: int, pod_id: str, image: str,
+) -> Optional[_Outcome]:
+    """Always-on pip probe — no manifest enabler.
+
+    Runs `python -m pip --version` (preferring the ComfyUI venv when
+    present) and records wall time. Fails if pip is missing or slower
+    than ComfyUI-Manager's 5s get_pip_cmd timeout — the intermittent
+    error seen on slow network volumes."""
+    if not (host and port):
+        return None
+    log("running pip check (always on)...", indent=2)
+    ok, output = run_pip_check(host, port)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    if not ok:
+        log(
+            "pip check FAILED -- python -m pip missing or slower than "
+            "ComfyUI-Manager's 5s timeout",
+            indent=2,
+        )
+        dump_pod_logs(pod_id, image)
+        return "FAIL", "pip check failed"
+    log("pip check passed", indent=2)
+    return None
+
+
 def _run_jupyter_steps(
     host: str, port: int, pod_id: str, group: str, image: str,
 ) -> Optional[_Outcome]:
     """Jupyter checks: only when the group opted in via `test_jupyter`.
 
-    Two stages, both must pass:
-      1. IN-POD: SSH into the pod and probe 127.0.0.1:8888. Catches
-         start.sh regressions (e.g. wrong python interpreter for
-         `-m jupyter`) that don't surface in container stdout.
-      2. PROXY: from the test machine, hit
-         https://<pod-id>-8888.proxy.runpod.net/. Catches port-type
-         mistakes (`8888/tcp` instead of `8888/http`) — proxy never
-         registers a non-http port, so end users can't reach Jupyter
-         even though the in-pod check would happily pass."""
+    PROXY-FIRST: the public-proxy probe
+    (https://<pod-id>-8888.proxy.runpod.net/api/status) is the end-user
+    path and subsumes the in-pod check — if it answers, Jupyter is up
+    AND the port is exposed as 8888/http, so the in-pod probe is
+    skipped. Only when the proxy fails do we SSH in and probe
+    127.0.0.1:8888 to tell apart "Jupyter never started" (start.sh
+    regression) from "Jupyter is up but the port isn't 8888/http"."""
     if not (host and port and config.GROUP_TEST_JUPYTER.get(group, False)):
         return None
-
-    log(
-        f"running Jupyter Lab check (in-pod) for group '{group}'...",
-        indent=2,
-    )
-    ok, output = run_jupyter_check(host, port)
-    for line in (output or "").splitlines():
-        log(f"  {line}", indent=2)
-    if not ok:
-        log(
-            "jupyter check (in-pod) FAILED -- start.sh did not "
-            "bring up JupyterLab",
-            indent=2,
-        )
-        dump_pod_logs(pod_id, image)
-        return "FAIL", "Jupyter Lab check failed (in-pod)"
-    log("jupyter check (in-pod) passed", indent=2)
 
     log(
         f"running Jupyter Lab check (public proxy) for pod {pod_id}...",
@@ -241,80 +251,105 @@ def _run_jupyter_steps(
     ok, output = run_jupyter_proxy_check(pod_id)
     for line in (output or "").splitlines():
         log(f"  {line}", indent=2)
-    if not ok:
+    if ok:
+        log("jupyter check (public proxy) passed — in-pod check skipped", indent=2)
+        return None
+
+    # Proxy failed — SSH in to pinpoint which side is broken.
+    log(
+        "jupyter check (public proxy) FAILED — running in-pod check "
+        "to diagnose...",
+        indent=2,
+    )
+    ok, output = run_jupyter_check(host, port)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    if ok:
         log(
-            "jupyter check (public proxy) FAILED -- port likely "
-            "not exposed as 8888/http",
+            "in-pod check passed -> Jupyter is up but unreachable via "
+            "proxy — port likely not exposed as 8888/http",
             indent=2,
         )
         dump_pod_logs(pod_id, image)
-        return "FAIL", "Jupyter Lab check failed (public proxy)"
-    log("jupyter check (public proxy) passed", indent=2)
-    return None
+        return "FAIL", "Jupyter reachable in-pod but not via proxy (port type?)"
+    log(
+        "in-pod check FAILED too -> start.sh did not bring up JupyterLab",
+        indent=2,
+    )
+    dump_pod_logs(pod_id, image)
+    return "FAIL", "Jupyter Lab not running (proxy + in-pod both failed)"
+
+
+def _check_port_proxy_first(
+    host: str, port: int, pod_id: str, tp: int, label: str,
+) -> Optional[tuple[str, str]]:
+    """Shared proxy-first reachability check for one HTTP port.
+
+    1. PROXY: `https://<pod-id>-<tp>.proxy.runpod.net/` — the end-user
+       path. Passing proves both "service is up" and "port exposed as
+       <tp>/http", so the in-pod probe is skipped.
+    2. IN-POD (diagnostic, only on proxy failure): SSH in and curl
+       127.0.0.1:<tp> to tell apart "service never started" from
+       "service up but port not exposed as /http".
+
+    Returns None on pass, or ("FAIL", detail).  `label` prefixes log
+    lines (e.g. 'port 8080' / 'ComfyUI reachability')."""
+    log(
+        f"running {label} check (public proxy) on :{tp} for pod {pod_id}...",
+        indent=2,
+    )
+    ok, output = run_port_proxy_check(pod_id, tp)
+    for line in (output or "").splitlines():
+        log(f"  {line}", indent=2)
+    if ok:
+        log(f"{label} check (public proxy) passed — in-pod check skipped", indent=2)
+        return None
+
+    log(
+        f"{label} check (public proxy) FAILED — running in-pod check "
+        "to diagnose...",
+        indent=2,
+    )
+    ok, last_line = run_port_check(
+        host, port, tp,
+        on_line=lambda line: log(f"  {line}", indent=2),
+    )
+    if ok:
+        log(
+            f"in-pod check passed -> service on :{tp} is up but "
+            f"unreachable via proxy — port likely not exposed as {tp}/http",
+            indent=2,
+        )
+        return "FAIL", f"{label}: reachable in-pod but not via proxy on :{tp}"
+    log(
+        f"in-pod check FAILED too -- "
+        f"{last_line or 'service did not bind / returned HTTP 5xx'}",
+        indent=2,
+    )
+    return "FAIL", f"{label}: service not responding on :{tp} (proxy + in-pod)"
 
 
 def _run_port_steps(
     host: str, port: int, pod_id: str, group: str, image: str,
 ) -> Optional[_Outcome]:
     """Generic per-port HTTP checks driven by the `test_ports:` manifest
-    field. For each port we run two probes in sequence:
-      1. IN-POD: SSH in and `curl http://127.0.0.1:<port>/`. Catches the
-         "service didn't start at all" / "bound to wrong interface" /
-         "exited immediately" class of bugs that don't surface in
-         `desiredStatus`.
-      2. PROXY: from the test machine, hit
-         `https://<pod-id>-<port>.proxy.runpod.net/`. Catches port-type
-         mistakes (`<port>/tcp` instead of `<port>/http`) — the proxy
-         only registers `/http` ports, so end users can't reach the
-         service from a browser even if the in-pod check passed.
+    field — proxy-first via `_check_port_proxy_first` (in-pod probe only
+    runs as a diagnostic when the proxy fails).
 
-    Any failure is a FAIL on the whole pair — pinpoints which port and
-    which probe broke. Each port is tested independently, but we abort
-    on the first failure (a broken pod isn't going to recover for the
-    next port and we already have the diagnostic info we need).
-    """
+    Each port is tested independently, but we abort on the first failure
+    (a broken pod isn't going to recover for the next port and we
+    already have the diagnostic info we need)."""
     test_ports = config.GROUP_TEST_PORTS.get(group) or []
     if not (host and port and test_ports):
         return None
 
     for tp in test_ports:
-        log(
-            f"running port check (in-pod) for {tp} in group '{group}'...",
-            indent=2,
+        outcome = _check_port_proxy_first(
+            host, port, pod_id, tp, f"port {tp}",
         )
-        # Stream bash output live (heartbeat every 30s) so the operator
-        # sees the probe is alive during the long warm-up window. Without
-        # this the run looks frozen for up to PORT_WAIT_TIMEOUT seconds.
-        ok, last_line = run_port_check(
-            host, port, tp,
-            on_line=lambda line: log(f"  {line}", indent=2),
-        )
-        if not ok:
-            log(
-                f"port {tp} check (in-pod) FAILED -- "
-                f"{last_line or 'service did not bind / returned HTTP 5xx'}",
-                indent=2,
-            )
+        if outcome is not None:
             dump_pod_logs(pod_id, image)
-            return "FAIL", f"port {tp} check failed (in-pod)"
-        log(f"port {tp} check (in-pod) passed", indent=2)
-
-        log(
-            f"running port check (public proxy) for {tp} on pod {pod_id}...",
-            indent=2,
-        )
-        ok, output = run_port_proxy_check(pod_id, tp)
-        for line in (output or "").splitlines():
-            log(f"  {line}", indent=2)
-        if not ok:
-            log(
-                f"port {tp} check (public proxy) FAILED -- "
-                f"likely not exposed as {tp}/http",
-                indent=2,
-            )
-            dump_pod_logs(pod_id, image)
-            return "FAIL", f"port {tp} check failed (public proxy)"
-        log(f"port {tp} check (public proxy) passed", indent=2)
+            return outcome
 
     return None
 
@@ -325,9 +360,10 @@ def _run_comfyui_steps(
     """ComfyUI checks, two tiers driven by two manifest flags:
 
       1. SMOKE (`test_comfyui: true`, also implied by the functional flag)
-         — reachability of ComfyUI on :8188, probed twice: in-pod over SSH
-         (`curl 127.0.0.1:8188`) and via the public Runpod proxy. Answers
-         "is ComfyUI up and reachable from a browser?".
+         — reachability of ComfyUI on :8188, proxy-first: the public
+         Runpod proxy is probed first (the end-user path); the in-pod
+         probe over SSH only runs as a diagnostic when the proxy fails.
+         Answers "is ComfyUI up and reachable from a browser?".
 
       2. FUNCTIONAL (`test_comfyui_functional: true`) — the end-to-end
          "can it actually generate an image" gate. Runs entirely HOST-SIDE
@@ -348,43 +384,13 @@ def _run_comfyui_steps(
 
     cp = config.COMFYUI_PORT
 
-    # --- Tier 1: reachability smoke (in-pod + public proxy) ---------------
-    log(
-        f"running ComfyUI reachability check (in-pod) on :{cp} "
-        f"for group '{group}'...",
-        indent=2,
+    # --- Tier 1: reachability smoke (proxy-first) -------------------------
+    outcome = _check_port_proxy_first(
+        host, port, pod_id, cp, "ComfyUI reachability",
     )
-    ok, last_line = run_port_check(
-        host, port, cp,
-        on_line=lambda line: log(f"  {line}", indent=2),
-    )
-    if not ok:
-        log(
-            f"ComfyUI reachability (in-pod) FAILED -- "
-            f"{last_line or 'ComfyUI did not bind / returned HTTP 5xx'}",
-            indent=2,
-        )
+    if outcome is not None:
         dump_pod_logs(pod_id, image)
-        return "FAIL", f"ComfyUI reachability check failed (in-pod) on :{cp}"
-    log("ComfyUI reachability (in-pod) passed", indent=2)
-
-    log(
-        f"running ComfyUI reachability check (public proxy) on :{cp} "
-        f"for pod {pod_id}...",
-        indent=2,
-    )
-    ok, output = run_port_proxy_check(pod_id, cp)
-    for line in (output or "").splitlines():
-        log(f"  {line}", indent=2)
-    if not ok:
-        log(
-            f"ComfyUI reachability (public proxy) FAILED -- "
-            f"likely not exposed as {cp}/http",
-            indent=2,
-        )
-        dump_pod_logs(pod_id, image)
-        return "FAIL", f"ComfyUI reachability check failed (public proxy) on :{cp}"
-    log("ComfyUI reachability (public proxy) passed", indent=2)
+        return outcome
 
     # --- Tier 2: end-to-end functional generation ------------------------
     if not func:
@@ -409,6 +415,36 @@ def _run_comfyui_steps(
         dump_pod_logs(pod_id, image)
         return "FAIL", f"ComfyUI functional check failed: {last_line[:160]}"
     log("ComfyUI functional check passed", indent=2)
+    return None
+
+
+def _run_log_scan_step(pod_id: str, image: str) -> Optional[_Outcome]:
+    """Always-on container-log error scan via the REST log API (no SSH).
+
+    Greps the container stdout backfill for error markers
+    (LOG_ERROR_PATTERN, default \\berr(or)?s?\\b case-insensitive) —
+    catches failures that never surface as a dead port or crashed pod,
+    e.g. ComfyUI-Manager's 'Neither pip nor uv are available'. Skipped
+    (not failed) when the API key is missing. Disable with
+    LOG_ERROR_SCAN=0."""
+    if not config.LOG_ERROR_SCAN:
+        return None
+    log("scanning container logs for error markers (via API)...", indent=2)
+    ok, report = scan_pod_logs_for_errors(pod_id)
+    for line in report.splitlines():
+        log(f"  {line}", indent=2)
+    if not ok:
+        # Two failure modes: error markers matched, or the fetch stayed
+        # empty and the scan verified nothing (see scan_pod_logs_for_errors).
+        detail = (
+            "log scan unverified — log API returned no container logs"
+            if report.startswith("log scan UNVERIFIED")
+            else "error markers found in container logs"
+        )
+        log(f"log scan FAILED -- {detail}", indent=2)
+        dump_pod_logs(pod_id, image)
+        return "FAIL", detail
+    log("log scan passed", indent=2)
     return None
 
 
@@ -437,6 +473,43 @@ def _run_dwell_step(pod_id: str, image: str) -> Optional[_Outcome]:
         "container crashed after initial boot "
         f"({config.DWELL_SEC}s dwell re-probe failed: {err})"
     )
+
+
+def _run_post_dwell_steps(
+    pod_id: str, image: str, group: str,
+) -> Optional[_Outcome]:
+    """Re-verify the pod AFTER the dwell window.
+
+    The dwell SSH re-probe alone can't catch a late ComfyUI death:
+    start.sh keeps the container (and SSH) alive via `sleep infinity`
+    after a crash, and the pre-dwell log scan ran before the crash
+    happened. So, when dwell actually waited, we (1) re-probe ComfyUI
+    through the proxy if this group tests it, and (2) re-scan the
+    container logs for error markers picked up during the window."""
+    if config.DWELL_SEC <= 0:
+        return None
+
+    # (1) ComfyUI must still answer — quick probe, not a readiness wait.
+    if config.GROUP_TEST_COMFYUI.get(group, False) or \
+            config.GROUP_TEST_COMFYUI_FUNCTIONAL.get(group, False):
+        log("re-probing ComfyUI after dwell...", indent=2)
+        ok, detail = probe_comfyui_alive(pod_id)
+        if not ok:
+            log(
+                f"ComfyUI re-probe FAILED after dwell ({detail}) — "
+                "it died during the dwell window",
+                indent=2,
+            )
+            dump_pod_logs(pod_id, image)
+            return "FAIL", (
+                f"ComfyUI stopped answering during the {config.DWELL_SEC}s "
+                f"dwell (post-dwell probe: {detail})"
+            )
+        log(f"ComfyUI re-probe passed ({detail})", indent=2)
+
+    # (2) Final log scan — covers anything logged during the window.
+    log("re-scanning container logs after dwell...", indent=2)
+    return _run_log_scan_step(pod_id, image)
 
 
 def test_pair(image: str, instance: str, group: str) -> _Outcome:
@@ -495,6 +568,9 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
         outcome = _run_cuda_step(host, port, image, group, pod_id)
         if outcome is not None:
             return outcome
+        outcome = _run_pip_step(host, port, pod_id, image)
+        if outcome is not None:
+            return outcome
         outcome = _run_jupyter_steps(host, port, pod_id, group, image)
         if outcome is not None:
             return outcome
@@ -504,7 +580,13 @@ def test_pair(image: str, instance: str, group: str) -> _Outcome:
         outcome = _run_comfyui_steps(host, port, pod_id, group, image)
         if outcome is not None:
             return outcome
+        outcome = _run_log_scan_step(pod_id, image)
+        if outcome is not None:
+            return outcome
         outcome = _run_dwell_step(pod_id, image)
+        if outcome is not None:
+            return outcome
+        outcome = _run_post_dwell_steps(pod_id, image, group)
         if outcome is not None:
             return outcome
 
@@ -537,7 +619,13 @@ def test_image(
     last_create_error = ""
     last_create_inst = ""
     for inst in instances:
-        result, detail = test_pair(image, inst, group)
+        # Tag every line from this attempt with the instance name
+        # ([W1-A40]) so interleaved parallel logs stay attributable.
+        set_worker_context(inst)
+        try:
+            result, detail = test_pair(image, inst, group)
+        finally:
+            set_worker_context(None)
         if result == "PASS":
             return "PASS", "", inst
         if result == "FAIL":

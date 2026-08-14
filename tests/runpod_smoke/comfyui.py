@@ -80,6 +80,32 @@ def _load_json_file(path: str):
 # ---------------------------------------------------------------------------
 
 
+def probe_comfyui_alive(
+    pod_id: str, retries: int = 3, retry_sleep: int = 5,
+) -> tuple[bool, str]:
+    """Quick "is ComfyUI still answering?" probe: GET /system_stats via
+    the public proxy, a few retries to absorb transient proxy-replica
+    errors. Unlike `_wait_server` this is NOT a readiness wait — ComfyUI
+    already proved reachable earlier, so a short budget is enough.
+
+    Used for the post-dwell re-check: ComfyUI can crash during the dwell
+    window while SSH stays up (start.sh keeps the container alive via
+    `sleep infinity` after a crash). Returns (ok, detail)."""
+    base = _base_url(pod_id)
+    last = ""
+    for attempt in range(1, retries + 1):
+        try:
+            code, _ = _get(base + "/system_stats", timeout=10)
+            if code == 200:
+                return True, f"HTTP 200 (attempt #{attempt})"
+            last = f"HTTP {code}"
+        except OSError as e:
+            last = f"{type(e).__name__}: {e}"
+        if attempt < retries:
+            time.sleep(retry_sleep)
+    return False, last
+
+
 def _wait_server(base: str, emit: Callable[[str], None]) -> bool:
     """Poll ``/system_stats`` through the proxy until it answers 200. The
     public proxy is eventually-consistent (a fresh pod takes ~10-30s to enter
@@ -109,21 +135,50 @@ def _wait_server(base: str, emit: Callable[[str], None]) -> bool:
 
 def _runpoddirect_folder_paths(
     base: str, emit: Callable[[str], None],
-) -> Optional[dict]:
-    """Return the RunpodDirect ``folder_paths`` map, or None if its routes
-    404 (the node isn't installed in this image). Doubles as a feature-detect
-    for "can we download models over HTTP?"."""
-    try:
-        code, body = _get(base + "/server_download/folder_paths", timeout=20)
-    except OSError as e:
-        emit(f"  warn: /server_download/folder_paths errored: {e}")
-        return None
-    if code != 200:
-        return None
-    try:
-        return json.loads(body)
-    except Exception:
-        return None
+) -> tuple[Optional[dict], str]:
+    """Feature-detect ComfyUI-RunpodDirect: fetch its ``folder_paths`` map.
+    Returns ``(map | None, last_error)`` — None means the routes never
+    answered 200 within the retry window.
+
+    Retries for up to COMFYUI_ROUTES_TIMEOUT rather than taking one shot:
+    the Runpod proxy is eventually-consistent and its replicas can disagree
+    — /system_stats may have answered through a replica that knows the pod
+    while the next request lands on one that 404s/5xxes. A single-shot
+    probe misclassified such transient proxy errors as "node not installed
+    in this image" (an intermittent CI FAIL on images where the node is
+    definitely baked in). A genuinely absent node costs one extra
+    COMFYUI_ROUTES_TIMEOUT of polling, which is acceptable for the
+    unambiguous verdict."""
+    deadline = time.monotonic() + config.COMFYUI_ROUTES_TIMEOUT
+    attempt = 0
+    last = ""
+    while True:
+        attempt += 1
+        try:
+            code, body = _get(base + "/server_download/folder_paths", timeout=20)
+            if code == 200:
+                try:
+                    return json.loads(body), ""
+                except Exception:
+                    last = "HTTP 200 with non-JSON body"
+            else:
+                snippet = (body or b"")[:120].decode("utf-8", "replace")
+                last = f"HTTP {code}: {snippet}".strip()
+        except OSError as e:
+            last = f"{type(e).__name__}: {e}"
+        if time.monotonic() >= deadline:
+            emit(
+                f"  /server_download/folder_paths never answered 200 in "
+                f"{config.COMFYUI_ROUTES_TIMEOUT}s ({attempt} attempts, "
+                f"last: {last})"
+            )
+            return None, last
+        if attempt == 1:
+            emit(
+                f"  /server_download/folder_paths not answering yet ({last}) "
+                f"— retrying for up to {config.COMFYUI_ROUTES_TIMEOUT}s"
+            )
+        time.sleep(3)
 
 
 def _model_present(
@@ -426,10 +481,13 @@ def run_comfyui_check(
         return False, f"could not read ComfyUI test assets: {e}"
 
     if models:
-        if _runpoddirect_folder_paths(base, emit) is None:
+        folder_paths, routes_err = _runpoddirect_folder_paths(base, emit)
+        if folder_paths is None:
             return False, (
-                "ComfyUI-RunpodDirect routes (/server_download/*) not available "
-                "on this image — cannot provision the model over HTTP"
+                "ComfyUI-RunpodDirect routes (/server_download/*) never "
+                f"answered within {config.COMFYUI_ROUTES_TIMEOUT}s "
+                f"(last: {routes_err}) — node missing from the image, or "
+                "the proxy kept failing; cannot provision the model over HTTP"
             )
         for m in models:
             if not _ensure_model(base, m, emit):

@@ -121,12 +121,11 @@ def auto_terminate_deadline() -> str:
 # SSH
 # ---------------------------------------------------------------------------
 
-# Container logs aren't exposed via runpodctl 2.3.0's JSON, so we SSH
-# directly to the pod's exposed port 22 (mapped to a random high port on
-# a public IP by Runpod) to grab them. The endpoint is discovered from
-# `pod get`'s ssh.ip / ssh.port fields once the pod is scheduled.
+# SSH is used for the readiness probe, the in-pod functional checks, and
+# a GPU SMI snapshot in the diagnostic dump. The endpoint is discovered
+# from `pod get`'s ssh.ip / ssh.port fields once the pod is scheduled.
 #   Override SSH_IDENTITY if your key lives in a non-standard location.
-#   Set SSH_LOG_FETCH=0 to skip SSH-based log fetching entirely.
+#   Set SSH_LOG_FETCH=0 to skip the SSH-based SMI snapshot entirely.
 SSH_IDENTITY = os.environ.get("RUNPOD_SSH_KEY", "")
 SSH_LOG_FETCH = os.environ.get("SSH_LOG_FETCH", "1") == "1"
 SSH_OPTS = [
@@ -142,6 +141,38 @@ SSH_OPTS = [
     "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
     "-o", "HostKeyAlgorithms=+ssh-rsa",
 ]
+
+# ---------------------------------------------------------------------------
+# Container logs via REST API (v2)
+# ---------------------------------------------------------------------------
+
+# GET https://api.runpod.io/v2/pods/{id}/logs streams container stdout as
+# SSE — the ONE thing SSH can't see (PID-1 stdout isn't readable from
+# another process inside the pod). Primary source in dump_pod_logs and
+# the feed for the always-on log error scan.
+#   LOG_ERROR_SCAN=0        disable the error-scan step entirely
+#   LOG_ERROR_PATTERN=...   override the regex (case-insensitive)
+#   LOG_API_TAIL=N          how many historical lines to backfill (max 5000)
+LOG_ERROR_SCAN = os.environ.get("LOG_ERROR_SCAN", "1") == "1"
+# \berr(or)?s?\b: matches 'err' / 'error' / 'ERRORS' as words, but NOT
+# 'stderr' / 'error-free' substrings inside longer identifiers.
+# crash(ed/es/ing) is included too: apps report post-boot failures as
+# 'worker crashed' / 'process crashing' without any 'error' nearby.
+LOG_ERROR_PATTERN = os.environ.get(
+    "LOG_ERROR_PATTERN", r"\berr(or)?s?\b|\bcrash(ed|es|ing)?\b"
+)
+LOG_API_TAIL = int(os.environ.get("LOG_API_TAIL", "1000"))
+
+# Error markers for the HOST-side system-log stream (`source=system`) —
+# checked when a pod won't come up (stall hint, TIMEOUT, terminal state)
+# and in the diagnostic dump. Broader than LOG_ERROR_PATTERN because
+# host/runtime failures phrase themselves as 'failed to ...' at least as
+# often as 'error ...' (e.g. `error starting container: ... failed to
+# fulfil mount request`), and 'container crashed' appears with neither.
+SYS_LOG_ERROR_PATTERN = os.environ.get(
+    "SYS_LOG_ERROR_PATTERN",
+    r"\berr(or)?s?\b|\bfail(ed|ure)?\b|\bcrash(ed|es|ing)?\b",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +218,9 @@ PORT_WAIT_TIMEOUT = int(os.environ.get("PORT_WAIT_TIMEOUT", "300"))
 # so the Jupyter-specific knob can stay tighter (Jupyter responds fast
 # once bound) without making us impatient with slower-to-boot apps.
 # Same override pattern as PORT_WAIT_TIMEOUT — bump together for slow
-# apps (proxy probe runs AFTER in-pod probe confirms the server is up,
-# but Runpod's proxy is eventually-consistent and can lag by ~10-30s).
+# apps. The proxy probe now runs FIRST (end-user path), so this window
+# must absorb the app's full cold start PLUS the proxy's own
+# eventually-consistent registration lag (~10-30s).
 PORT_PROXY_TIMEOUT = int(os.environ.get("PORT_PROXY_TIMEOUT", "300"))
 
 
@@ -229,6 +261,13 @@ COMFYUI_MODELS_MANIFEST = os.environ.get(
 # generous; ComfyUI-Manager's first-boot registry fetch can also delay the
 # first successful HTTP response.
 COMFYUI_WAIT_TIMEOUT = int(os.environ.get("COMFYUI_WAIT_TIMEOUT", "600"))
+
+# Seconds the RunpodDirect feature-detect (`/server_download/folder_paths`)
+# keeps retrying before declaring the routes unavailable. Retrying matters:
+# the Runpod proxy's replicas are eventually-consistent, and a single-shot
+# probe used to misclassify a transient proxy 404/5xx as "node not
+# installed in this image" — an intermittent CI FAIL.
+COMFYUI_ROUTES_TIMEOUT = int(os.environ.get("COMFYUI_ROUTES_TIMEOUT", "60"))
 
 # Seconds allowed for provisioning the model(s) via RunpodDirect. DreamShaper
 # 8 pruned is ~2.1 GB; over a fast datacenter link its 8-connection download

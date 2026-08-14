@@ -26,7 +26,7 @@ tests/
     ├── runpodctl.py        ← subprocess wrappers around the `runpodctl` binary
     ├── instances.py        ← GPU catalog, budget resolution, exclude filter, CUDA detection
     ├── pod.py              ← pod create/lifecycle/signals, registry auth
-    ├── checks.py           ← SSH probe, CUDA functional check, Jupyter probes, log dumper
+    ├── checks.py           ← SSH probe, CUDA / pip checks, Jupyter probes, log dumper
     └── runner.py           ← test_pair / test_image (per-image orchestration)
 ```
 
@@ -113,16 +113,18 @@ runs this sequence and reports the outcome as soon as one step fails.
 | # | Step | Failure → |
 |---|------|---|
 | 1 | `runpodctl pod create` (with `--gpu-id`, `--container-disk-in-gb`, `--ports`, registry auth, optional `--min-cuda-version`). Transient `5xx` / `Something went wrong` errors are retried silently up to `CREATE_RETRIES` with linear backoff. | `UNAVAILABLE` (no capacity for this instance type — try next) / `CREATE_FAIL` (bad image tag, registry auth, malformed request — any non-capacity, non-transient orchestrator error after retries are exhausted) |
-| 2 | Poll `runpodctl pod get` until `ssh.ip` / `ssh.port` are assigned and one-shot `ssh root@ip -p port 'echo ready'` succeeds (the real readiness signal — `desiredStatus` is always `RUNNING` after create) | `STUCK` if no SSH endpoint within `CREATE_TIMEOUT` (almost always a bad host in the scheduler pool — try another instance type) |
+| 2 | Poll `runpodctl pod get` until `ssh.ip` / `ssh.port` are assigned and one-shot `ssh root@ip -p port 'echo ready'` succeeds (the real readiness signal — `desiredStatus` is always `RUNNING` after create). In parallel, poll the REST v2 status (`GET /v2/pods/{id}`) as a fail-fast signal: unlike `desiredStatus`, it distinguishes `STARTING`/`RUNNING` and surfaces `ERROR` when the container start is aborted (e.g. a host-side mount failure at `runc` init), so we bail immediately instead of sitting out `CREATE_TIMEOUT`. On `ERROR`/stall/timeout, the host-side system logs (`GET /v2/pods/{id}/logs?source=system`) are scanned for error markers (`SYS_LOG_ERROR_PATTERN`) — that's where image-pull and container-init failures are reported; container stdout stays empty when the container never starts. | `STUCK` if no SSH endpoint within `CREATE_TIMEOUT` (almost always a bad host in the scheduler pool — try another instance type); `FAIL` if the pod hits a terminal state (`ERROR`/`EXITED`/`TERMINATED`) |
 | 3 | **CUDA functional check** over SSH — see [Functional check](#functional-check). Image-driven: pytorch ref → `torch.cuda` + matmul; cuda/rocm ref → `nvidia-smi` + `nvcc`; neither → skip | `FAIL` (image is broken — stop iterating; another GPU won't help) |
-| 4 | **JupyterLab in-pod check** (only when `test_jupyter: true`) — see [Jupyter check](#jupyter-check-opt-in). SSH in, wait for `:8888` to bind, `jupyter server list`, `curl /api/status` with token | `FAIL` (`start.sh` didn't bring up Jupyter — usually wrong python interpreter) |
-| 5 | **JupyterLab public-proxy check** (only when `test_jupyter: true`) — `GET https://<pod-id>-8888.proxy.runpod.net/api/status` from the test machine | `FAIL` (port not exposed as `8888/http`, or proxy never registered) |
-| 6 | **Per-port HTTP checks** (only when `test_ports: [...]`) — see [Per-port checks](#per-port-checks-opt-in). For every listed port: SSH in and `curl http://127.0.0.1:<port>/`, then `GET https://<pod-id>-<port>.proxy.runpod.net/` from the test machine. | `FAIL` (service didn't bind, returned `5xx`, or port wasn't exposed as `<port>/http` so the proxy never registered it) |
-| 7 | **ComfyUI reachability smoke** (when `test_comfyui: true`, also implied by `test_comfyui_functional`) — see [ComfyUI checks](#comfyui-checks-smoke--functional). Probe `:8188` in-pod (`curl 127.0.0.1:8188`) then via the public proxy. | `FAIL` (ComfyUI didn't bind, returned `5xx`, or `:8188` wasn't exposed as `8188/http`) |
+| 4 | **Pip check** (always on — no manifest flag) — see [Pip check](#pip-check-always-on). Prefers ComfyUI venv if present, `python -m pip --version` + wall time. Fails if pip missing or >5s | `FAIL` (pip missing / too slow on this host's network volume) |
+| 5 | **JupyterLab check** (only when `test_jupyter: true`) — see [Jupyter check](#jupyter-check-opt-in). Proxy-first: `GET https://<pod-id>-8888.proxy.runpod.net/api/status` from the test machine; on success the in-pod probe is skipped. On failure, SSH in and probe `127.0.0.1:8888` to diagnose. | `FAIL` (Jupyter not running, or up but port not exposed as `8888/http` — the in-pod diagnostic tells which) |
+| 6 | **Per-port HTTP checks** (only when `test_ports: [...]`) — see [Per-port checks](#per-port-checks-opt-in). For every listed port, proxy-first: `GET https://<pod-id>-<port>.proxy.runpod.net/`; in-pod `curl 127.0.0.1:<port>` only as a diagnostic when the proxy fails. | `FAIL` (service didn't bind / returned `5xx`, or up but port not exposed as `<port>/http`) |
+| 7 | **ComfyUI reachability smoke** (when `test_comfyui: true`, also implied by `test_comfyui_functional`) — see [ComfyUI checks](#comfyui-checks-smoke--functional). Proxy-first probe of `:8188`, in-pod probe only on proxy failure. | `FAIL` (ComfyUI didn't bind, returned `5xx`, or `:8188` wasn't exposed as `8188/http`) |
 | 8 | **ComfyUI functional check** (only when `test_comfyui_functional: true`) — see [ComfyUI checks](#comfyui-checks-smoke--functional). Host-side against the public proxy URL (no SSH): provision the model(s) via ComfyUI-RunpodDirect's `/server_download/*` routes, POST the workflow to `/prompt`, poll `/history`, fetch the output via `/view` and validate it's a real PNG. Runs only after the reachability smoke (7) passes. | `FAIL` (couldn't provision the model, ComfyUI rejected the workflow, generation errored/timed out, or no valid PNG came out) |
-| 9 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
-| 10 | `dump_pod_logs` — pull `uname`, `syslog`, `dmesg`, `/var/log/*.log`, `nvidia-smi` via SSH for the run log | _(diagnostic only)_ |
-| 11 | `runpodctl pod delete` (always — even on Ctrl-C / exception via `atexit` + signal handlers) | _(diagnostic only)_ |
+| 9 | **Container-log error scan** (always on, no SSH) — see [Log error scan](#log-error-scan-always-on). Pull container stdout via the REST log API (`GET /v2/pods/{id}/logs`) and grep for error/crash markers (case-insensitive, override with `LOG_ERROR_PATTERN`). Empty/failed fetches are retried (3×) and then FAIL as unverified. Skipped when no API key. Disable with `LOG_ERROR_SCAN=0`. | `FAIL` (error markers in container logs — e.g. ComfyUI-Manager's "Neither pip nor uv are available" — or the log API kept returning 0 lines) |
+| 10 | Sleep `DWELL_SEC`, re-probe SSH (catches "boots fine then crashes after 30s") | `FAIL` if SSH stops responding |
+| 11 | **Post-dwell re-verification** (skipped when `DWELL_SEC=0`). The SSH re-probe alone can't catch a late ComfyUI death — `start.sh` keeps the container alive via `sleep infinity` after a crash. So after the dwell: (a) if the group tests ComfyUI, re-probe `/system_stats` via the proxy (quick, 3 attempts); (b) re-run the container-log error scan to cover anything logged during the window. | `FAIL` (ComfyUI stopped answering during dwell, or new error markers / unverified scan) |
+| 12 | `dump_pod_logs` — full container-log backfill (`LOG_API_TAIL` lines) via the REST log API, system-log error markers (`source=system`, filtered by `SYS_LOG_ERROR_PATTERN`), plus a `nvidia-smi` / `rocm-smi` snapshot via SSH | _(diagnostic only)_ |
+| 13 | `runpodctl pod delete` (always — even on Ctrl-C / exception via `atexit` + signal handlers) | _(diagnostic only)_ |
 
 `test_image()` then iterates over the next instance candidate when the
 result was `UNAVAILABLE` or `STUCK`, and short-circuits on `PASS`,
@@ -264,8 +266,8 @@ Field reference:
 | `exclude_instances` | fnmatch-style patterns (case-insensitive) subtracted from the candidate list AFTER `instances:`, budget, or `check_all_gpu` selection. Useful for blocking known-bad host pairings without rewriting the whole list — e.g. `"*Blackwell*"` skips every Blackwell GPU (sm\_100 / sm\_120 are not in the kernel set of PyTorch ≤ 2.6 wheels). |
 | `min_cuda_version` | `X.Y` string passed to `runpodctl pod create --min-cuda-version`. Only used as a **fallback** when the image tag itself doesn't encode a CUDA version (e.g. NGC `nvidia-pytorch:25.11`). Image tags like `cu1281` / `cuda1281` always win. |
 | `test_jupyter` | `true` / `false` — when true, the pod is created with `JUPYTER_PASSWORD=admin` in env and HTTP port 8888 exposed, then the script SSHes in and verifies JupyterLab is actually listening **with Jupyter-specific assertions** (`jupyter server list`, `/api/status` with token). Use for groups whose images use `container-template/start.sh` (`runpod/base`, `runpod/pytorch`, `runpod/autoresearch`, `rocm`). Skip for NGC `nvidia-pytorch` (different entrypoint). Default: `false`. |
-| `test_ports` | List of TCP ports the image is expected to serve over HTTP. Each port is exposed as `<port>/http` so Runpod's public proxy registers it, then the runner probes the port twice: (1) in-pod via SSH (`curl http://127.0.0.1:<port>/`), (2) via the public proxy (`https://<pod-id>-<port>.proxy.runpod.net/`). Generic counterpart to `test_jupyter` — no app-specific assertions, just "a server responds with HTTP `<500`". Use for ComfyUI (`8188`), FileBrowser (`8080`), or any app where you only need to verify "it's listening". Can coexist with `test_jupyter: true` (Jupyter on 8888 is still checked with the Jupyter-specific probes; any other port in `test_ports` gets the generic one). Default: empty. |
-| `test_comfyui` | `true` / `false` — ComfyUI **reachability smoke**. A ComfyUI-branded alias for `test_ports: [8188]`: exposes `:8188` as `8188/http` and probes it twice — in-pod (`curl 127.0.0.1:8188`) and via the public Runpod proxy (`https://<pod-id>-8188.proxy.runpod.net/`). Accepts any HTTP `<500`. Answers **"is ComfyUI up and reachable from a browser?"** — not whether it can generate. Cheap (no download, no GPU work). Also enabled implicitly by `test_comfyui_functional`. Default: `false`. |
+| `test_ports` | List of TCP ports the image is expected to serve over HTTP. Each port is exposed as `<port>/http` so Runpod's public proxy registers it, then the runner probes the port twice: (1) in-pod via SSH (`curl http://127.0.0.1:<port>/`), (2) via the public proxy (`https://<pod-id>-<port>.proxy.runpod.net/`). Generic counterpart to `test_jupyter` — no app-specific assertions: the proxy probe requires HTTP 200 (anything else is retried until the deadline — the proxy itself 404s while the pod isn't routed yet), the in-pod probe accepts any HTTP `<500`. Use for ComfyUI (`8188`), FileBrowser (`8080`), or any app where you only need to verify "it's listening". Can coexist with `test_jupyter: true` (Jupyter on 8888 is still checked with the Jupyter-specific probes; any other port in `test_ports` gets the generic one). Default: empty. |
+| `test_comfyui` | `true` / `false` — ComfyUI **reachability smoke**. A ComfyUI-branded alias for `test_ports: [8188]`: exposes `:8188` as `8188/http` and probes it twice — in-pod (`curl 127.0.0.1:8188`) and via the public Runpod proxy (`https://<pod-id>-8188.proxy.runpod.net/`). The proxy probe requires HTTP 200 (anything else is retried); the in-pod one accepts any HTTP `<500`. Answers **"is ComfyUI up and reachable from a browser?"** — not whether it can generate. Cheap (no download, no GPU work). Also enabled implicitly by `test_comfyui_functional`. Default: `false`. |
 | `test_comfyui_functional` | `true` / `false` — ComfyUI **end-to-end functional check**. Proves the image can actually **generate an image**, run **host-side against the public proxy URL** (`https://<pod-id>-8188.proxy.runpod.net`, no SSH): provisions the checkpoint(s) from [`tests/comfyui/models.json`](comfyui/models.json) via the baked-in [ComfyUI-RunpodDirect](https://github.com/MadiatorLabs/ComfyUI-RunpodDirect) node's `/server_download/*` routes, POSTs the workflow [`tests/comfyui/workflows/gsl_starter_1_1.api.json`](comfyui/workflows/gsl_starter_1_1.api.json) (the "1.1 Starter – Text to Image" template) to `/prompt`, polls `/history`, then fetches the result via `/view` and asserts it's a real, non-empty PNG. **Implies `test_comfyui`** — the reachability smoke runs first and the generation only runs if it passes (no point spending GPU time on an unreachable ComfyUI). Heavier: pulls a ~2 GB model + uses GPU time, so gate it behind an enabler. Default: `false`. |
 
 The `base_cpu` group is special: `runpodctl` 2.3.0 does not let us pick
@@ -364,6 +366,10 @@ pytorch:
 | `REGISTRY_AUTH_ID` | _(empty)_ | Explicit Docker Hub registry auth id to pass as `--registry-auth-id`. Overrides auto-discovery. |
 | `REGISTRY_AUTH_NAME` | _(empty)_ | Display name to look up via `runpodctl registry list` when `REGISTRY_AUTH_ID` is not set. Falls back to the first entry. |
 | `DWELL_SEC` | `60` | Extra seconds to wait after SSH becomes reachable, then re-probe SSH to catch containers that boot, accept SSH, then crash. Set 0 to skip the re-probe. |
+| `LOG_ERROR_SCAN` | `1` | Always-on container-log error scan via the REST log API (no SSH). Set `0` to disable. Auto-skipped when no API key is available. |
+| `LOG_ERROR_PATTERN` | `\berr(or)?s?\b\|\bcrash(ed\|es\|ing)?\b` | Case-insensitive regex the container-log scan greps for. Matches `err`/`error`/`ERRORS`/`crashed` as words, not `stderr`. |
+| `LOG_API_TAIL` | `1000` | How many historical container-log lines the REST log API backfills for the scan and the diagnostic dump. Max 5000. |
+| `SYS_LOG_ERROR_PATTERN` | `\berr(or)?s?\b\|\bfail(ed\|ure)?\b\|\bcrash(ed\|es\|ing)?\b` | Case-insensitive regex greped against the HOST-side system-log stream (`source=system`) when a pod won't come up (terminal state, stall, timeout) and in the diagnostic dump. Broader than `LOG_ERROR_PATTERN` because host/runtime failures phrase themselves as `failed to …` or `container crashed` at least as often as `error …`. |
 | `CREATE_TIMEOUT` | `600` | Max seconds to wait for SSH to become reachable. Raise for ROCm workflows (`create-timeout: "1200"` on the action) — the official `rocm/pytorch:*` base images are 30-50GB and routinely take 8-15 minutes to pull. |
 | `POLL_INTERVAL` | `10` | Poll cadence for SSH probes. |
 | `MAX_PARALLEL` | `1` | How many images to smoke-test concurrently. Each worker holds at most one pod, so this caps simultaneous live pods. Keep modest to avoid Runpod rate limits and surprise bills. |
@@ -380,6 +386,7 @@ pytorch:
 | `COMFYUI_WORKFLOW` | `tests/comfyui/workflows/gsl_starter_1_1.api.json` | Path to the ComfyUI **API-format** workflow POSTed to `/prompt`. Override to test a different template. |
 | `COMFYUI_MODELS_MANIFEST` | `tests/comfyui/models.json` | Path to the JSON list of models to provision before running (`filename`, `directory` = a ComfyUI `folder_paths` key, `url`, `sha256`). |
 | `COMFYUI_WAIT_TIMEOUT` | `600` | Seconds the `test_comfyui_functional` probe waits for `/system_stats` to answer **through the proxy** (cold ComfyUI cp -r + torch import + Manager fetch + eventually-consistent proxy). |
+| `COMFYUI_ROUTES_TIMEOUT` | `60` | Seconds the RunpodDirect feature-detect (`GET /server_download/folder_paths`) keeps retrying before declaring the routes unavailable. Absorbs transient proxy 404/5xx from eventually-consistent proxy replicas. |
 | `COMFYUI_DOWNLOAD_TIMEOUT` | `900` | Seconds allowed for RunpodDirect to provision the model(s). DreamShaper 8 pruned is ~2.1 GB. |
 | `COMFYUI_GEN_TIMEOUT` | `300` | Seconds allowed for the generation itself (queue → PNG on disk), including the cold first checkpoint load into VRAM. |
 | `COMFYUI_SAVE_DIR` | _(empty)_ | Local directory to save the generated PNG into (a plain HTTP GET of `/view`, then written as `<pod-id>_<filename>.png`). Empty = validate from the `/view` response only, don't keep a copy (keeps CI stdout light). Set it to actually **see** the image — the pod is deleted right after the check. |
@@ -409,48 +416,101 @@ groups don't silently skip the check:
   → no check. Pod must still boot and survive `DWELL_SEC`.
 
 
+## Pip check
+
+No manifest flag — runs on every pod after the CUDA step whenever SSH
+is available. Prefers the ComfyUI venv if present, else system
+`python`. Runs `python -m pip --version`, logs `pip_wall_ms=…`.
+
+Wall time is measured in **milliseconds** (bash 5's `$EPOCHREALTIME`;
+whole-second timestamps would record a 5.99s run as "5s" and let it
+slip under the budget). Deliberately timed with shell built-ins, not a
+python one-liner — invoking python for the clock would pre-warm the
+interpreter from the network volume and bias the cold-start cost the
+check exists to measure.
+
+**Fails when** pip is missing/broken, **or** wall time exceeds **5s**
+(ComfyUI-Manager's hard `get_pip_cmd` timeout). Useful with
+`check_all_gpu: true` to map which GPU hosts have slow network storage.
+
+
+## Log error scan (always on)
+
+No manifest flag — runs **twice** on every pod (after the functional
+checks and again after the dwell window, so a crash during dwell can't
+slip past the scan), and needs **no SSH**: container stdout is pulled
+host-side from the REST log API
+(`GET https://api.runpod.io/v2/pods/{id}/logs`, SSE). This is
+the one log source SSH can't reach — ComfyUI runs as PID 1 and its
+stdout isn't readable from a separate SSH session.
+
+The backfill (`LOG_API_TAIL` lines, default 1000) is grepped with
+`LOG_ERROR_PATTERN` (default `\berr(or)?s?\b|\bcrash(ed|es|ing)?\b`,
+case-insensitive — matches `err` / `ERROR` / `errors` / `crashed` as
+words but not `stderr`). Any match FAILs the pair and prints the
+matched lines.
+
+An **empty fetch is never a pass**: every image logs on boot
+(`start.sh` alone produces dozens of lines), so "scanned 0 log lines"
+means the scan verified nothing. An empty or failed fetch is retried
+(3 attempts, 10s apart) and then FAILs the pair as
+`log scan unverified` instead of silently passing.
+
+Skipped (not failed) when no Runpod API key is available (same
+discovery as the GPU catalog: `RUNPOD_API_KEY` env var or
+`~/.runpod/config.toml`). Disable entirely with `LOG_ERROR_SCAN=0`.
+The same API feed is also the primary source in every `dump_pod_logs`
+diagnostic dump (full `LOG_API_TAIL` backfill); SSH is only used for a
+GPU SMI snapshot (`nvidia-smi` / `rocm-smi`), which the log API can't
+provide.
+
+
 ## Jupyter check (opt-in via manifest `test_jupyter: true`)
 
-Two stages, both must pass:
+Proxy-first, one probe in the happy path:
 
-1. **In-pod.** SSH into the pod and `curl http://127.0.0.1:8888/api/status`
-   with our token. Catches silent `start.sh` failures (e.g. `python3 -m
-   jupyter` not finding the module on Ubuntu 22.04 — the kind of bug
-   that prints `Jupyter Lab started` in the container log while no
-   server is actually running).
-2. **Public proxy.** From the test machine, `GET
-   https://<pod-id>-8888.proxy.runpod.net/api/status` with the token.
-   Catches port-type misconfigurations (`8888/tcp` instead of
-   `8888/http` — the proxy never wires up non-http ports) and DNS /
-   proxy registration issues that would prevent real users from
-   reaching Jupyter from the Runpod console.
+1. **Public proxy.** From the test machine, `GET
+   https://<pod-id>-8888.proxy.runpod.net/api/status` with the token —
+   the end-user path. Passing proves BOTH that Jupyter is running and
+   that the port is exposed as `8888/http`, so the in-pod probe is
+   skipped.
+2. **In-pod (diagnostic, only on proxy failure).** SSH into the pod and
+   `curl http://127.0.0.1:8888/api/status` with our token. Splits the
+   failure into two distinct reports: in-pod passes → Jupyter is up but
+   the port isn't exposed as `8888/http` (or proxy registration
+   failed); in-pod fails too → `start.sh` never brought Jupyter up
+   (e.g. `python3 -m jupyter` not finding the module).
 
 
 ## Per-port checks (opt-in via manifest `test_ports: [...]`)
 
 Generic counterpart to the Jupyter check — verifies that **some** HTTP
-server binds each listed port and answers, both locally and through
-Runpod's public proxy. No app-specific assertions, so it's the right
-tool for ComfyUI (`8188`), FileBrowser (`8080`), Tensorboard, etc.
+server binds each listed port and answers through Runpod's public
+proxy. No app-specific assertions, so it's the right tool for ComfyUI
+(`8188`), FileBrowser (`8080`), Tensorboard, etc.
 
-For every port in the list, two probes run in sequence (both must pass):
+For every port in the list, proxy-first:
 
-1. **In-pod.** SSH in and run a single unified retry loop for up to
-   `PORT_WAIT_TIMEOUT` seconds: at each iteration probe `/dev/tcp/127.0.0.1/<port>`
-   for binding, and if the port is open also try `curl http://127.0.0.1:<port>/`.
-   The probe **accepts any HTTP status `<500`** (200, 301, 401, 403 all
-   prove the server is alive — many apps return 401/403 on `/` without
-   auth and that's still a "the service is up" signal we want to see).
-   Output streams live to the host with a heartbeat every 30s so long
-   warm-up windows (ComfyUI cold start, etc.) don't look frozen.
-   Catches "service never started", "service died on first request",
-   and "service bound to a non-loopback interface".
-2. **Public proxy.** From the test machine, `GET
-   https://<pod-id>-<port>.proxy.runpod.net/`. Same `<500` acceptance
-   criterion. Catches the most common end-user-facing failure mode:
-   the port was declared `<port>/tcp` (or not declared at all) so
-   Runpod's proxy never registered it — the in-pod probe would still
-   pass, but real users can't reach the service from a browser.
+1. **Public proxy.** From the test machine, `GET
+   https://<pod-id>-<port>.proxy.runpod.net/`, retried for up to
+   `PORT_PROXY_TIMEOUT` seconds (must absorb the app's cold start plus
+   the proxy's ~10-30s registration lag). The probe requires a strict
+   **HTTP 200** — anything else is retried until the deadline and then
+   fails. Notably 404: the Runpod proxy answers 404 on its own while
+   the pod is missing from its routing table, so a 404 can't be told
+   apart from the app and must not pass the check. Every app we test
+   serves 200 on `/` (redirects are followed, so a healthy redirect
+   chain still ends in 200). Passing proves both "service up" and
+   "port exposed as `<port>/http`", so the in-pod probe is skipped.
+2. **In-pod (diagnostic, only on proxy failure).** SSH in and run a
+   retry loop for up to `PORT_WAIT_TIMEOUT` seconds: probe
+   `/dev/tcp/127.0.0.1/<port>` for binding, then `curl
+   http://127.0.0.1:<port>/`, accepting any HTTP `<500` (here there is
+   no proxy in the middle, so even a 404 genuinely comes from the app
+   and proves a server is listening), heartbeat every 30s. Splits the failure: in-pod passes → the port was declared
+   `<port>/tcp` (or not at all) so the proxy never registered it;
+   in-pod fails too → the service never started / died / bound to the
+   wrong interface.
 
 Independent from `test_jupyter`. You can enable both — port 8888 will
 go through Jupyter-specific probes (server list + token), and any
@@ -471,8 +531,9 @@ separate manifest fields, but the functional one implies the smoke one:
 
 **`test_comfyui` (reachability smoke).** A ComfyUI-branded alias for
 `test_ports: [8188]`: exposes `:8188` as `8188/http`, then probes it
-in-pod (`curl 127.0.0.1:8188`) and through the public Runpod proxy,
-accepting any HTTP `<500`. It only answers "is the server up and reachable
+in-pod (`curl 127.0.0.1:8188`) and through the public Runpod proxy
+(strict HTTP 200; anything else — including the 404 the proxy itself
+emits until the pod is routed — is retried, then fails). It only answers "is the server up and reachable
 from a browser?". Use it on every ComfyUI image — it's cheap. (You don't
 also need `test_ports: [8188]`; this replaces it. Keep `test_ports` for
 *other* ports like `8080` FileBrowser.)
@@ -518,9 +579,13 @@ failing reason surfaced):
    Otherwise `POST /server_download/start` (RunpodDirect writes into the
    right `folder_paths` dir with an 8-connection download and verifies
    size + sha256 server-side), then poll `GET /server_download/status/...`
-   until `completed`. Requires the RunpodDirect routes to exist — if
-   `GET /server_download/folder_paths` 404s (node missing from the image),
-   the check fails with a clear message rather than silently.
+   until `completed`. Requires the RunpodDirect routes to exist — the
+   feature-detect (`GET /server_download/folder_paths`) retries for up to
+   `COMFYUI_ROUTES_TIMEOUT` (default 60s) before failing, because the
+   Runpod proxy's replicas are eventually-consistent and a single-shot
+   probe used to misclassify a transient proxy 404/5xx as "node missing
+   from the image". The FAIL message includes the last HTTP code/error so
+   the two cases stay distinguishable.
 3. **Confirm visibility.** Hit `/object_info/CheckpointLoaderSimple` and
    assert the freshly-downloaded checkpoint now shows up in the node's
    enum (retries briefly to absorb the rescan lag).

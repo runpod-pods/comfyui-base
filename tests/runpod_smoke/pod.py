@@ -18,7 +18,7 @@ import time
 from typing import Optional
 
 from . import config
-from .checks import ssh_probe
+from .checks import pod_status_api, ssh_probe, system_log_errors
 from .instances import detect_cuda_version
 from .log import log
 from .runpodctl import runpodctl, runpodctl_json
@@ -61,18 +61,6 @@ TRANSIENT_RE = re.compile(
     r"|connection\s+(?:reset|refused)",
     re.IGNORECASE,
 )
-
-RUNTIME_ERROR_RE = re.compile(
-    r"toomanyrequests"
-    r"|rate\s+limit"
-    r"|failed\s+to\s+pull\s+image"
-    r"|error\s+creating\s+container"
-    r"|manifest\s+(?:unknown|not\s+found)"
-    r"|access\s+denied"
-    r"|no\s+such\s+image",
-    re.IGNORECASE,
-)
-
 
 # ---------------------------------------------------------------------------
 # Active-pod tracking + signal-safe cleanup
@@ -331,78 +319,6 @@ def pod_state(pod_id: str) -> dict:
     }
 
 
-def pod_status(pod_id: str) -> Optional[str]:
-    """Returns `desiredStatus` — note this is always RUNNING after creation
-    so it can ONLY be used to detect terminal states (EXITED/FAILED/DEAD)."""
-    return pod_state(pod_id).get("desired")
-
-
-# Top-level fields on `pod get` that may carry a runtime error message
-# directly. Checked verbatim with `isinstance(value, str)`.
-_DIRECT_ERROR_FIELDS = ("lastError", "errorMessage", "statusMessage",
-                        "lastStatusChange")
-
-# Same as above but expected on the nested `runtime` dict that Runpod
-# returns alongside top-level fields.
-_RUNTIME_ERROR_FIELDS = ("lastError", "errorMessage", "statusMessage")
-
-# Fields whose value is a list of event objects (or strings); each item's
-# `message` is harvested. `events` is the standard one; the other two
-# show up on older `pod get` responses.
-_EVENT_LIST_FIELDS = ("events", "statusEvents", "containerEvents")
-
-# Fields whose value is a single block of log lines that may contain
-# pull-time errors not surfaced anywhere else.
-_LOG_BLOCK_FIELDS = ("containerLogs", "logs")
-
-
-def _collect_string_field(target: list[str], src: dict, key: str) -> None:
-    val = src.get(key)
-    if isinstance(val, str) and val:
-        target.append(val)
-
-
-def _collect_event_messages(target: list[str], events: object) -> None:
-    if not isinstance(events, list):
-        return
-    for ev in events:
-        msg = ev.get("message") if isinstance(ev, dict) else str(ev)
-        if isinstance(msg, str) and msg:
-            target.append(msg)
-
-
-def _gather_runtime_error_candidates(data: dict) -> list[str]:
-    """Walk every plausible place Runpod stuffs a runtime/pull error,
-    return a flat list of candidate lines. Doesn't filter — that's
-    `pod_runtime_error`'s job."""
-    runtime = data.get("runtime") or {}
-    candidates: list[str] = []
-    for key in _DIRECT_ERROR_FIELDS:
-        _collect_string_field(candidates, data, key)
-    for key in _RUNTIME_ERROR_FIELDS:
-        _collect_string_field(candidates, runtime, key)
-    for key in _EVENT_LIST_FIELDS:
-        _collect_event_messages(candidates, data.get(key) or runtime.get(key))
-    for key in _LOG_BLOCK_FIELDS:
-        val = data.get(key) or runtime.get(key)
-        if isinstance(val, str):
-            candidates.extend(val.splitlines())
-    return candidates
-
-
-def pod_runtime_error(pod_id: str) -> Optional[str]:
-    """Inspect pod-get response for container-runtime errors (pull failures,
-    bad images, etc.) that appear *before* the pod ever reaches RUNNING.
-    Returns a short error string or None."""
-    data = runpodctl_json("pod", "get", pod_id, timeout=30)
-    if not isinstance(data, dict):
-        return None
-    for line in _gather_runtime_error_candidates(data):
-        if RUNTIME_ERROR_RE.search(line):
-            return line.strip()[:300]
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Wait for the pod to become reachable
 # ---------------------------------------------------------------------------
@@ -410,6 +326,31 @@ def pod_runtime_error(pod_id: str) -> Optional[str]:
 
 # Pod-lifecycle states that mean "we will never become RUNNING — stop polling".
 _TERMINAL_DESIRED = {"EXITED", "FAILED", "DEAD", "TERMINATED"}
+
+# Terminal statuses of the REST v2 `GET /v2/pods/{id}` endpoint. ERROR is
+# the valuable one: the legacy desiredStatus NEVER reports it (it shows
+# RUNNING even when the container start is aborted by the runtime, e.g.
+# a host-side mount failure at `runc` init), so without the v2 status we
+# would sit out the full CREATE_TIMEOUT on a pod that can never boot.
+_TERMINAL_API_STATUSES = {"EXITED", "ERROR", "TERMINATED"}
+
+
+def _log_system_errors(pod_id: str, context: str) -> None:
+    """Fetch host-side system logs via the REST API and print the
+    error-marker lines. Used when a pod won't come up: the container log
+    stream is empty when the container never started, so system logs are
+    the only place failures like image-pull errors or container-init
+    aborts are visible."""
+    errors = system_log_errors(pod_id)
+    if errors is None:
+        log("system logs unavailable (no API key / request failed)", indent=2)
+        return
+    if not errors:
+        log(f"system logs: no error markers ({context})", indent=2)
+        return
+    log(f"system-log error markers ({context}):", indent=2)
+    for line in errors:
+        log(f"  {line}", indent=2)
 
 
 def _print_stall_hint(pod_id: str, elapsed: int) -> None:
@@ -472,11 +413,13 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
         'RUNNING'   SSH probe to root@<ssh.ip>:<ssh.port> succeeded — the
                     container's sshd is up, which means the container has
                     fully booted and we can trust it as healthy.
-        'TERMINAL'  desiredStatus flipped to EXITED/FAILED/DEAD/TERMINATED.
+        'TERMINAL'  desiredStatus flipped to EXITED/FAILED/DEAD/TERMINATED,
+                    OR the REST v2 `status` reported ERROR/EXITED/TERMINATED
+                    (ERROR = container start aborted, only v2 surfaces it).
         'TIMEOUT'   SSH never reachable within CREATE_TIMEOUT — pod stuck
                     initializing (capacity issue or image broken).
 
-    SSH probing is the real health-check now. We poll `pod get` to discover
+    SSH probing is the real health-check. We poll `pod get` to discover
     ssh.ip / ssh.port (assigned by Runpod once a machine is allocated), then
     try `ssh root@ip -p port 'echo ready'` until it succeeds. This works
     because:
@@ -486,10 +429,19 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
       * A successful SSH means the container booted + sshd started — the
         canonical signal of readiness, much stronger than `desiredStatus`
         (always RUNNING) or `uptimeSeconds` (stale in this CLI version).
+
+    Alongside SSH we also poll the REST v2 pod status (`GET /v2/pods/{id}`)
+    as a FAIL-FAST signal, not as the readiness gate: v2 distinguishes
+    STARTING/RUNNING/ERROR where desiredStatus reports RUNNING for all
+    three. On ERROR (and on stall/timeout) the host-side system logs
+    (`source=system`) are scanned for error markers — that's where
+    image-pull and container-init failures are reported; container stdout
+    stays empty when the container never starts.
     """
     start = time.time()
     deadline = start + config.CREATE_TIMEOUT
     last_summary: Optional[tuple] = None
+    last_api_status: Optional[str] = None
     ssh_attempts = 0
     stall_hinted = False  # one-time hint when pod has no ssh endpoint for a while
 
@@ -504,8 +456,19 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
         port = st.get("ssh_port") or 0
         elapsed = int(time.time() - start)
 
-        if desired in _TERMINAL_DESIRED:
-            return "TERMINAL", f"pod entered {desired} after {elapsed}s"
+        # REST v2 status — None when the API key is missing or the call
+        # failed; the loop degrades gracefully to CLI-state + SSH-only.
+        api_status = pod_status_api(pod_id)
+        if api_status and api_status != last_api_status:
+            log(f"t+{elapsed}s API status: {api_status}", indent=2)
+            last_api_status = api_status
+
+        if desired in _TERMINAL_DESIRED or api_status in _TERMINAL_API_STATUSES:
+            terminal = (
+                api_status if api_status in _TERMINAL_API_STATUSES else desired
+            )
+            _log_system_errors(pod_id, f"pod entered {terminal}")
+            return "TERMINAL", f"pod entered {terminal} after {elapsed}s"
 
         if host and port:
             ssh_attempts += 1
@@ -515,10 +478,11 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
             if outcome is not None:
                 return outcome
         else:
-            summary = (desired, host, port, False)
+            summary = (desired, api_status, host, port, False)
             if summary != last_summary:
                 log(
                     f"t+{elapsed}s desired={desired!r} "
+                    f"api_status={api_status!r} "
                     f"uptime={st.get('uptime') or 0}s "
                     "ssh endpoint not assigned yet",
                     indent=2,
@@ -526,14 +490,17 @@ def wait_for_running(pod_id: str) -> tuple[str, str]:
                 last_summary = summary
             if elapsed >= config.STALL_HINT_AFTER and not stall_hinted:
                 _print_stall_hint(pod_id, elapsed)
+                _log_system_errors(pod_id, f"stalled {elapsed}s")
                 stall_hinted = True
 
         time.sleep(config.POLL_INTERVAL)
 
+    _log_system_errors(pod_id, f"timeout after {config.CREATE_TIMEOUT}s")
     return "TIMEOUT", (
         f"SSH endpoint never became reachable in {config.CREATE_TIMEOUT}s "
         f"({ssh_attempts} probes) — pod stuck initializing. Likely causes: "
         "(1) slow/throttled image pull (check UI for pull progress), "
         "(2) Docker Hub rate limit if many parallel pulls of the same image, "
-        "(3) host scheduling delay on a saturated DC"
+        "(3) host scheduling delay on a saturated DC — "
+        "see system-log error markers above (if any)"
     )
