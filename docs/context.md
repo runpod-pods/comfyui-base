@@ -95,7 +95,12 @@ Recognized at runtime by the start scripts:
 
 - Python 3.12 is the default interpreter in the image.
 - Venv location:
-  - Both images: `/workspace/runpod-slim/ComfyUI/.venv-cu128`
+  - CUDA 12.8 image: `/workspace/runpod-slim/ComfyUI/.venv-cu128`
+  - CUDA 13.0 image: `/workspace/runpod-slim/ComfyUI/.venv-cu130`
+  - The image writes its `TORCH_INDEX_SUFFIX` to
+    `/opt/comfyui-torch-index-suffix`; `start.sh` uses it to select the
+    matching venv. A workspace volume can therefore move between CUDA image
+    variants without one variant's PyTorch wheels shadowing another's.
 - All dependencies are pre-installed at image build time. No pip installs occur at runtime.
 - **Version pins live in `docker-bake.hcl`** (single source of truth, not in the Dockerfiles). Dockerfiles declare `ARG` names but the default values are set in the bake file:
   - `COMFYUI_VERSION` — ComfyUI release tag
@@ -115,7 +120,7 @@ Recognized at runtime by the start scripts:
 - A lock file with SHA256 hashes is generated inside the builder stage using `pip-compile --generate-hashes`.
 - PyTorch wheel index is controlled by `TORCH_INDEX_SUFFIX` build arg (`cu128` for regular, `cu130` for 5090).
 - The runtime image writes `/opt/comfyui-runtime-constraints.txt` from the same PyTorch pins and `start.sh` exports it as `PIP_CONSTRAINT`, so legacy venv migration and ComfyUI-Manager dependency installs cannot silently replace the CUDA-matched torch stack.
-- At runtime, baked ComfyUI is copied from `/opt/comfyui-baked` to `/workspace/runpod-slim/ComfyUI/` on first boot. On later boots, a bundle manifest detects image upgrades and refreshes ComfyUI core plus the four image-managed custom nodes. Models, inputs, outputs, user settings, virtual environments, and user-installed custom nodes are preserved.
+- At runtime, baked ComfyUI is copied from `/opt/comfyui-baked` to `/workspace/runpod-slim/ComfyUI/` on first boot. On later boots, a bundle manifest detects image upgrades and refreshes ComfyUI core plus the four image-managed custom nodes. Models, inputs, outputs, user settings, virtual environments, and user-installed custom nodes are preserved. When a volume made by another CUDA image is attached, its venv remains untouched and a new matching venv is created; requirements declared by user custom nodes are reinstalled into the new venv.
 
 Preinstalled custom nodes:
 

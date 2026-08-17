@@ -4,7 +4,10 @@ set -e  # Exit the script if any statement returns a non-true return value
 COMFYUI_DIR="/workspace/runpod-slim/ComfyUI"
 BAKED_COMFYUI_DIR="/opt/comfyui-baked"
 BUNDLE_VERSION_FILE=".runpod-bundle-version"
-VENV_DIR="$COMFYUI_DIR/.venv-cu128"
+# The image writes this at build time. Older images did not have it and
+# only supported CUDA 12.8, so cu128 is the backwards-compatible fallback.
+TORCH_INDEX_SUFFIX=$(cat /opt/comfyui-torch-index-suffix 2>/dev/null || echo "cu128")
+VENV_DIR="$COMFYUI_DIR/.venv-$TORCH_INDEX_SUFFIX"
 OLD_VENV_DIR="$COMFYUI_DIR/.venv"
 FILEBROWSER_CONFIG="/root/.config/filebrowser/config.json"
 DB_FILE="/workspace/runpod-slim/filebrowser.db"
@@ -171,6 +174,41 @@ upgrade_comfyui_if_needed() {
     echo "ComfyUI workspace upgraded successfully"
 }
 
+# A venv is tied to the CUDA/PyTorch variant that created it. Do not copy
+# site-packages from another variant: CUDA-dependent wheels in it can shadow
+# the baked torch stack. Reinstall only requirements declared by user nodes;
+# baked-node dependencies are already installed in system site-packages.
+create_variant_venv() {
+    local previous_venv="${1:-}"
+    local node req node_count=0 installed=0
+
+    echo "============================================="
+    echo "  Creating ComfyUI venv for $TORCH_INDEX_SUFFIX"
+    [ -n "$previous_venv" ] && echo "  Preserving previous venv: $previous_venv"
+    echo "============================================="
+
+    cd "$COMFYUI_DIR"
+    python3.12 -m venv --system-site-packages "$VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+    python -m ensurepip
+
+    for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
+        [ -f "$req" ] || continue
+        node=$(basename "$(dirname "$req")")
+        case " ${BAKED_NODES[*]} " in
+            *" $node "*) continue ;;
+        esac
+        node_count=$((node_count + 1))
+        echo "[$node_count] Installing user node requirements: $node"
+        pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+        installed=$((installed + 1))
+    done
+
+    echo "Ensuring ComfyUI requirements are present..."
+    pip install -r "$COMFYUI_DIR/requirements.txt" 2>&1 | grep -E "^(Successfully|ERROR)" || true
+    echo "ComfyUI $TORCH_INDEX_SUFFIX venv ready — $installed user nodes processed"
+}
+
 # ---------------------------------------------------------------------------- #
 #                               Main Program                                     #
 # ---------------------------------------------------------------------------- #
@@ -212,40 +250,26 @@ fi
 
 upgrade_comfyui_if_needed
 
-# Migrate old CUDA 12.4 venv to cu128
+# Migrate the legacy unversioned venv. Keep its previous behavior of moving
+# it to a backup, because it predates CUDA-variant-specific environments.
 if [ -d "$OLD_VENV_DIR" ] && [ ! -d "$VENV_DIR" ]; then
-    NODE_COUNT=$(find "$COMFYUI_DIR/custom_nodes" -maxdepth 2 -name "requirements.txt" 2>/dev/null | wc -l)
-    echo "============================================="
-    echo "  CUDA 12.4 -> 12.8 migration"
-    echo "  Reinstalling deps for $NODE_COUNT custom nodes"
-    echo "  This may take several minutes"
-    echo "============================================="
     mv "$OLD_VENV_DIR" "${OLD_VENV_DIR}.bak"
-    cd "$COMFYUI_DIR"
-    python3.12 -m venv --system-site-packages "$VENV_DIR"
-    source "$VENV_DIR/bin/activate"
-    python -m ensurepip
-    # Skip nodes baked into the image — their deps are in system site-packages
-    BAKED_NODES="ComfyUI-Manager ComfyUI-KJNodes Civicomfy ComfyUI-RunpodDirect"
-    CURRENT=0
-    INSTALLED=0
-    for req in "$COMFYUI_DIR"/custom_nodes/*/requirements.txt; do
-        if [ -f "$req" ]; then
-            NODE_NAME=$(basename "$(dirname "$req")")
-            case " $BAKED_NODES " in
-                *" $NODE_NAME "*) continue ;;
-            esac
-            CURRENT=$((CURRENT + 1))
-            echo "[$CURRENT] $NODE_NAME"
-            pip install -r "$req" 2>&1 | grep -E "^(Successfully|ERROR)" || true
-            INSTALLED=$((INSTALLED + 1))
-        fi
-    done
-    echo "Ensuring ComfyUI requirements are present..."
-    pip install -r "$COMFYUI_DIR/requirements.txt" 2>&1 | grep -E "^(Successfully|ERROR)" || true
-    echo "Migration complete — $INSTALLED user nodes processed (${NODE_COUNT} total, baked nodes skipped)"
+    create_variant_venv "${OLD_VENV_DIR}.bak"
     echo "Old venv backed up at ${OLD_VENV_DIR}.bak — delete it to free space:"
     echo "  rm -rf ${OLD_VENV_DIR}.bak"
+fi
+
+# A persistent volume may have been used with another CUDA image. Leave that
+# variant's venv intact (it can still be used by that image), and create a
+# fresh venv for this image's torch stack instead.
+if [ -d "$COMFYUI_DIR" ] && [ ! -d "$VENV_DIR" ]; then
+    for previous_venv in "$COMFYUI_DIR"/.venv-cu*; do
+        [ -d "$previous_venv" ] || continue
+        [ "$previous_venv" = "$VENV_DIR" ] && continue
+        echo "Found $previous_venv from another CUDA image; it will be preserved."
+        create_variant_venv "$previous_venv"
+        break
+    done
 fi
 
 # Setup ComfyUI if needed
@@ -318,7 +342,7 @@ echo "  ComfyUI exited unexpectedly (exit code $COMFY_EXIT)."
 echo "  Check the logs above for the error/traceback."
 echo "  SSH and JupyterLab are still available."
 echo "  To restart after fixing:"
-echo "    cd $COMFYUI_DIR && source .venv-cu128/bin/activate"
+echo "    cd $COMFYUI_DIR && source .venv-$TORCH_INDEX_SUFFIX/bin/activate"
 echo "    python main.py $FIXED_ARGS"
 echo "============================================="
 

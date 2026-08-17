@@ -137,6 +137,7 @@ ENV FILEBROWSER_CONFIG=/workspace/runpod-slim/.filebrowser.json
 
 # ---- CUDA variant (re-declared for runtime stage) ----
 ARG CUDA_VERSION_DASH=12-8
+ARG TORCH_INDEX_SUFFIX
 ARG TORCH_VERSION
 ARG TORCHVISION_VERSION
 ARG TORCHAUDIO_VERSION
@@ -148,7 +149,8 @@ ARG FILEBROWSER_SHA256
 # Keep runtime pip installs aligned with the baked CUDA-specific PyTorch stack.
 RUN printf "torch==%s\ntorchvision==%s\ntorchaudio==%s\n" \
     "$TORCH_VERSION" "$TORCHVISION_VERSION" "$TORCHAUDIO_VERSION" \
-    > /opt/comfyui-runtime-constraints.txt
+    > /opt/comfyui-runtime-constraints.txt && \
+    printf '%s\n' "$TORCH_INDEX_SUFFIX" > /opt/comfyui-torch-index-suffix
 
 # Update and install runtime dependencies, CUDA, and common tools
 RUN apt-get update && \

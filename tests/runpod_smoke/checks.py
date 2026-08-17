@@ -275,7 +275,11 @@ def pip_check_command() -> str:
         "now_ms() { if [ -n \"$EPOCHREALTIME\" ]; "
         "then t=${EPOCHREALTIME//[.,]/}; echo $((t / 1000)); "
         "else echo $(( $(date +%s) * 1000 )); fi; }; "
-        "PY=/workspace/runpod-slim/ComfyUI/.venv-cu128/bin/python; "
+        # Mirrors start.sh: the image marker selects the CUDA-specific venv.
+        # Old CUDA 12.8 images lack the marker, so retain the cu128 fallback.
+        "TORCH_INDEX_SUFFIX=$(cat /opt/comfyui-torch-index-suffix 2>/dev/null "
+        "|| echo cu128); "
+        "PY=/workspace/runpod-slim/ComfyUI/.venv-$TORCH_INDEX_SUFFIX/bin/python; "
         "[ -x \"$PY\" ] || PY=/workspace/runpod-slim/ComfyUI/.venv/bin/python; "
         "[ -x \"$PY\" ] || PY=python; "
         "echo \"pip check interpreter: $PY\"; "

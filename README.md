@@ -9,6 +9,12 @@ Run the latest ComfyUI with CUDA 12.8. All dependencies are pre-installed in the
 
 If you have an existing pod created with an older version of this template (CUDA 12.4), a one-time migration is performed automatically on the next boot. ComfyUI and the bundled custom nodes are updated to the versions pinned by the image, while models, inputs, outputs, user settings, and user-installed custom nodes are preserved. The virtual environment is also migrated to CUDA 12.8 compatibility. This may take a few extra minutes on the first start after the update.
 
+The CUDA 13 template uses a separate `.venv-cu130` environment; this template
+uses `.venv-cu128`. If you attach the same network volume to a different CUDA
+template, its existing venv is preserved and a matching new one is created.
+Models and user custom nodes stay on the volume; dependencies declared in each
+user node's `requirements.txt` are reinstalled into the new venv.
+
 ## Access
 
 - `8188`: ComfyUI web UI
