@@ -171,6 +171,79 @@ upgrade_comfyui_if_needed() {
     echo "ComfyUI workspace upgraded successfully"
 }
 
+log_cuda_venv_diagnostics() {
+    local expected_build local_packages status
+    expected_build=$(sed -n 's/^torch==.*+\(cu[0-9][0-9]*\).*$/\1/p' \
+        "$PIP_CONSTRAINT_FILE" | head -n 1)
+
+    echo "============================================="
+    echo "  CUDA / venv diagnostics"
+    echo "  active venv: $VENV_DIR"
+    echo "  expected image torch build: ${expected_build:-unknown}"
+
+    status=$(VENV_DIR="$VENV_DIR" EXPECTED_TORCH_BUILD="$expected_build" \
+        python - <<'PY'
+import os
+import sys
+
+venv = os.path.realpath(os.environ["VENV_DIR"])
+expected = os.environ.get("EXPECTED_TORCH_BUILD", "")
+print(f"  python: {sys.executable}")
+
+try:
+    import torch
+except Exception as exc:
+    print(f"  torch import: FAILED ({type(exc).__name__}: {exc})")
+    print("TORCH_STATUS=IMPORT_FAILED")
+else:
+    actual = f"cu{torch.version.cuda.replace('.', '')}" if torch.version.cuda else "cpu"
+    location = os.path.realpath(torch.__file__)
+    local_torch = location.startswith(venv + os.sep)
+    print(f"  torch: {torch.__version__}")
+    print(f"  torch CUDA build: {actual}")
+    print(f"  torch location: {location}")
+    print(f"  torch from active venv: {local_torch}")
+    print(f"  CUDA available: {torch.cuda.is_available()}")
+    print(f"  CUDA device count: {torch.cuda.device_count()}")
+    if expected and actual != expected:
+        print("TORCH_STATUS=CUDA_MISMATCH")
+    elif local_torch:
+        print("TORCH_STATUS=LOCAL_TORCH")
+    else:
+        print("TORCH_STATUS=OK")
+PY
+)
+    echo "$status" | grep -v '^TORCH_STATUS='
+
+    local_packages=$(python -m pip freeze --local \
+        | grep -Ei '^(torch|torchvision|torchaudio|xformers|triton|onnxruntime|sageattention)(==|@)' \
+        || true)
+    if [ -n "$local_packages" ]; then
+        echo "  locally installed CUDA-sensitive packages:"
+        echo "$local_packages" | sed 's/^/    /'
+    else
+        echo "  locally installed CUDA-sensitive packages: none"
+    fi
+
+    case "$status" in
+        *"TORCH_STATUS=OK"*)
+            echo "  CUDA / venv status: OK — using the image PyTorch stack."
+            ;;
+        *"TORCH_STATUS=LOCAL_TORCH"*)
+            echo "  WARNING: PyTorch is installed inside the persistent venv."
+            echo "  It overrides the image PyTorch stack; verify it matches this image's CUDA build."
+            ;;
+        *"TORCH_STATUS=CUDA_MISMATCH"*)
+            echo "  WARNING: Persistent venv PyTorch does not match this image's CUDA build."
+            echo "  This can prevent CUDA from initializing. No files were changed automatically."
+            ;;
+        *)
+            echo "  WARNING: Could not verify the persistent venv PyTorch stack."
+            ;;
+    esac
+    echo "============================================="
+}
+
 # ---------------------------------------------------------------------------- #
 #                               Main Program                                     #
 # ---------------------------------------------------------------------------- #
@@ -275,6 +348,8 @@ else
     source "$VENV_DIR/bin/activate"
     echo "Using existing ComfyUI installation"
 fi
+
+log_cuda_venv_diagnostics
 
 # Warm up pip so ComfyUI-Manager's 5s timeout check doesn't fail on cold start.
 # Log wall time — Manager fails if `python -m pip --version` takes >5s.
